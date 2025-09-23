@@ -3,7 +3,6 @@ from pathlib import Path
 import torch
 
 # tile based classification on cell segmented images
-from vit_model_5_6 import VitClassification
 from wsi_tiler import WSITiler
 from wsi_segmentation import CellSegmentationProcessor
 from model_inference import WSIInferenceEngine

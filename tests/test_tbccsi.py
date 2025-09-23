@@ -31,8 +31,16 @@ def test_segmentation():
     print(f"produced {len(masks)} number of masked tiles.")
 
 def test_inference():
-
-
+    from tbccsi.model_inference import WSIInferenceEngine
+    model = WSIInferenceEngine('/users/dgibbs/Work/CSBC/inference_test/models/mixed_224_c/model_dir')
+    model.sample_id = "TestID"
+    model.prefix = "cancer"
+    output_dir = Path('/users/dgibbs/tmp/tbccsi_tests')
+    results = model.load_and_predict_tiles(output_dir=output_dir,
+                                           tile_file_path=output_dir/"TEST1_common_tiling.csv",
+                                           tile_input_dir=output_dir/"segmented_tiles",
+                                           )
+    print("DONE with prediction")
 
 def test_heatmap():
     from tbccsi.wsi_plot import WSIPlotter

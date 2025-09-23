@@ -1,4 +1,4 @@
-import sys
+
 import os
 import logging
 from pathlib import Path
@@ -149,8 +149,8 @@ class CellSegmentationProcessor:
                 # Open the image file
                 with Image.open(image_path) as img:
                     # Load the image data into memory and convert to RGB
-                    masked_pil_image = img.convert("RGB").copy()
-                    loaded_tiles.append((masked_pil_image, x, y, tile_id, mean_red, mean_green, mean_blue))
+                    tile_pil_image = img.convert("RGB").copy()
+                    loaded_tiles.append((tile_pil_image, x, y, tile_id, mean_red, mean_green, mean_blue))
             except FileNotFoundError:
                 print(f"Warning: Tile file not found, skipping: {image_path}")
             except Exception as e:

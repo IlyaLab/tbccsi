@@ -1,10 +1,5 @@
-from pathlib import Path
-import numpy as np
+
 import pandas as pd
-from PIL import Image
-import openslide
-from openslide import OpenSlide
-import tifffile
 import matplotlib.pyplot as plt
 
 

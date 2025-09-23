@@ -1,4 +1,4 @@
-import torch
+
 import torch.nn as nn
 
 from transformers import (
@@ -6,7 +6,10 @@ from transformers import (
     ViTConfig,
     ViTModel
 )
+
 from transformers.modeling_outputs import SequenceClassifierOutput
+
+
 
 class VitClassification(ViTPreTrainedModel):
     config_class = ViTConfig
