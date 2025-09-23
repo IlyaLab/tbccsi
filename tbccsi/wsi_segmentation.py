@@ -115,6 +115,53 @@ class CellSegmentationProcessor:
         return masked_tiles
 
 
+    def segment_tiles_from_disk(self, tile_file_path=None, tile_input_dir=None,
+                                save_masks=False, mask_output_dir=None):
+        print(f"Reading tile information from {tile_file_path}...")
+        try:
+            tile_df = pd.read_csv(tile_file_path)
+            # Ensure required columns exist
+            if not {'x', 'y', 'tile_id'}.issubset(tile_df.columns):
+                raise ValueError("Tile file must contain 'x', 'y', and 'tile_id' columns.")
+        except FileNotFoundError:
+            print(f"Error: Tile file not found at {tile_file_path}")
+            return []
+        except Exception as e:
+            print(f"Error reading tile file: {e}")
+            return []
+
+        loaded_tiles = []
+        mask_input_dir = Path(tile_input_dir) # Convert to Path object for easier joining
+
+        print(f"Loading {len(tile_df)} tiles from {tile_input_dir}...")
+
+        # Use tqdm for a progress bar
+        for _, row in tqdm(tile_df.iterrows(), total=tile_df.shape[0]):
+            x, y, tile_id, mean_red, mean_green, mean_blue = int(row['x']), int(row['y']), int(row['tile_id']), float(row['mean_red']), float(row['mean_green']), float(row['mean_blue'])
+
+            # Reconstruct the file path using the same logic as the saving function
+            collection_index = tile_id // 1000
+            collection_dir = mask_input_dir / f'collection_{collection_index}'
+            file_name = f"tile_{tile_id:06d}_x{x}_y{y}.png"
+            image_path = collection_dir / file_name
+
+            try:
+                # Open the image file
+                with Image.open(image_path) as img:
+                    # Load the image data into memory and convert to RGB
+                    masked_pil_image = img.convert("RGB").copy()
+                    loaded_tiles.append((masked_pil_image, x, y, tile_id, mean_red, mean_green, mean_blue))
+            except FileNotFoundError:
+                print(f"Warning: Tile file not found, skipping: {image_path}")
+            except Exception as e:
+                print(f"Warning: Could not load file {image_path}. Error: {e}")
+
+        print(f"Successfully loaded {len(loaded_tiles)} tiles from disk.")
+        print(f"Starting segmentation.....")
+        masked_tiles = self.segment_and_mask_tiles(loaded_tiles, save_masks, mask_output_dir)
+        return(masked_tiles)
+
+
     def load_masked_tiles_from_disk(self, tile_file_path, mask_input_dir):
         """
         Loads pre-segmented and masked tile images from disk.

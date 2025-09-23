@@ -1,5 +1,4 @@
 import os
-import logging
 from pathlib import Path
 import numpy as np
 import pandas as pd
@@ -26,6 +25,9 @@ class WSITiler:
         self.tiles = []
         self._slide = None
 
+        # make sure the output path exists
+        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+
         ### open the file, be it SVS or TIFF ###
         try:
             # --- Try OpenSlide First ---
@@ -37,20 +39,114 @@ class WSITiler:
             print(f"INFO: OpenSlide failed. Falling back to Tifffile for {self.slide_path}...")
             try:
                 # --- Fallback to Tifffile ---
-                self._slide = tifffile.TiffFile(self.slide_path)
+                # Open the file handle, but don't read the image data yet
+                tiff = tifffile.TiffFile(self.slide_path)
                 self._backend = 'tifffile'
-
-                # Get dimensions for all levels in the pyramid (series 0)
-                # Assumes a standard OME-TIFF pyramid structure
-                levels = self._slide.series[0].levels
-                self.level_dimensions = [(level.shape[1], level.shape[0]) for level in levels]
-                self._slide = self._slide.series[0].levels[self.level].asarray()
+                # Check if the TIFF is a pyramidal OME-TIFF
+                # A pyramidal series will exist and have the is_pyramidal flag set to True.
+                if tiff.series and tiff.series[0].is_pyramidal:
+                    # --- Handle Pyramidal TIFF ---
+                    print("INFO: Detected pyramidal TIFF structure.")
+                    pyramid = tiff.series[0]
+                    self.level_dimensions = [(level.shape[1], level.shape[0]) for level in pyramid.levels]
+                    # Ensure the requested level is valid before reading
+                    if self.level >= len(pyramid.levels):
+                        raise IndexError(
+                            f"Requested level {self.level} is out of bounds for pyramid with {len(pyramid.levels)} levels.")
+                    # Read the specified level into memory
+                    self._slide = pyramid.levels[self.level].asarray()
+                else:
+                    # --- Handle Flat TIFF (Color or Grayscale) ---
+                    print("INFO: Detected flat TIFF structure.")
+                    # Use tiff.asarray() to correctly assemble all pages/channels into a single NumPy array.
+                    # This is the key change to handle color images where channels are on separate pages.
+                    img_array = tiff.asarray()
+                    if img_array.ndim == 3 and img_array.shape[0] in [3, 4]:
+                        print(f"INFO: Transposing array from {img_array.shape} (C,H,W) to (H,W,C).")
+                        img_array = np.moveaxis(img_array, 0, -1)
+                    # Ensure the image has a supported shape (2D for grayscale, 3D for color)
+                    if img_array.ndim not in [2, 3]:
+                        raise ValueError(
+                            f"Unsupported image dimensionality. Expected 2 or 3 dimensions, but got {img_array.ndim}.")
+                    # Get spatial dimensions (height, width) from the first two axes of the array
+                    h, w = img_array.shape[0], img_array.shape[1]  # index 0 is the three color channels
+                    self.level_dimensions = [(w, h)]
+                    if self.level != 0:
+                        print(
+                            f"WARNING: Requested level {self.level}, but this is a flat TIFF. Loading level 0 instead.")
+                    # Assign the complete array (which will be HxW for grayscale or HxWxC for color)
+                    self._slide = img_array
+                # Close the file handle now that the image data is in the NumPy array
+                tiff.close()
                 print(f"INFO: Successfully opened {self.slide_path} with Tifffile.")
             except Exception as e:
                 raise IOError(f"Failed to open {self.slide_path} with both OpenSlide and Tifffile.") from e
         except Exception as e:
             # Catch other potential errors from OpenSlide
             raise IOError(f"An unexpected error occurred while opening {self.slide_path} with OpenSlide.") from e
+
+    def get_shape(self, level):
+        if openslide and isinstance(self._slide, OpenSlide):
+            # Handle OpenSlide object
+            slide_dims = self._slide.level_dimensions[level]
+            return(slide_dims)
+        elif tifffile and isinstance(self._slide, tifffile.TiffFile):
+            # Handle TiffFile object
+            # Get dimensions from the level
+            base_page = self._slide.pages[level]
+            slide_dims = (base_page.shape[1], base_page.shape[0])
+            return (slide_dims)
+        elif isinstance(self._slide, np.ndarray):
+            # Handle NumPy array object
+            print("Processing slide as NumPy array.")
+            # Get dimensions from the array's shape
+            slide_dims = (self._slide.shape[1], self._slide.shape[0])
+            return(slide_dims)
+
+    def get_thumbnail(self, thumb_size):
+        if len(thumb_size) != 2:
+            print("Thumb_size needs to be specified as a tuple (x,y)")
+            exit()
+        if openslide and isinstance(self._slide, OpenSlide):
+            # Handle OpenSlide object
+            thumbnail = self._slide.get_thumbnail(thumb_size)
+            print("Processing slide as OpenSlide object.")
+        elif tifffile and isinstance(self._slide, tifffile.TiffFile):
+            # Handle TiffFile object
+            print("Processing slide as TiffFile object.")
+            # Get dimensions from the highest resolution page (usually the first one)
+            base_page = self._slide.pages[0]
+            slide_dims = self.get_shape(0)  # (width, height)
+            # Find the best pyramid level to use for the thumbnail to avoid loading
+            # the massive full-resolution image into memory. We seek the smallest
+            # level that is still larger than our desired thumbnail size.
+            best_page = base_page
+            for page in reversed(self._slide.pages):
+                if page.shape[1] >= thumb_size[0] or page.shape[0] >= thumb_size[1]:
+                    best_page = page
+                    break
+            # Read the image data of the selected level and create a PIL Image
+            thumb_data = best_page.asarray()
+            thumbnail = Image.fromarray(thumb_data)
+            # Resize it to the final thumbnail size using a high-quality filter
+            thumbnail.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+        elif isinstance(self._slide, np.ndarray):
+            # Handle NumPy array object
+            print("Processing slide as NumPy array.")
+            # Get dimensions from the array's shape
+            slide_dims = self.get_shape(0)  # (width, height)
+            # Convert the full-resolution array to a PIL Image
+            thumbnail = Image.fromarray(self._slide)
+            # Resize it to the final thumbnail size using a high-quality filter
+            thumbnail.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+        else:
+            unsupported_type = type(self._slide)
+            raise TypeError(
+                f"Unsupported slide type: {unsupported_type}. "
+                "Please provide an OpenSlide or TiffFile object. "
+                "Ensure the respective libraries ('openslide-python' and 'tifffile') are installed."
+            )
+        return(thumbnail)
 
 
     def _read_region(self, location, level, size):
@@ -128,6 +224,7 @@ class WSITiler:
             list: A list of tuples, where each tuple is (tile_image, x, y, tile_id).
         """
         he_dir = self.output_path/'he_tiles'
+        os.makedirs(os.path.dirname(he_dir), exist_ok=True)
         expected_path = None
         # Get slide properties, which are needed in both cases
         level_dims = self.level_dimensions[self.level]
@@ -160,7 +257,7 @@ class WSITiler:
 
                 # If the tile wasn't loaded from a file, extract it from the slide
                 if tile_rgb is None:
-                    tile_raw = self._read_region(
+                    tile_raw = self.read_region(
                         (int(x * level_downsample), int(y * level_downsample)),
                         self.level,
                         (self.tile_size, self.tile_size)

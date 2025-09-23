@@ -11,8 +11,10 @@ Tile based classification on cell segmented images
 
 ## Features
 
-* TODO
+* H&E tiles, produces the common_tiling file.
+* Cell segmentation with CellPose-SAM.
+* Cell type predictions using ViT models.
+* Plots tile prediction heatmaps.
 
 ## Credits
-
-This package was created with [Cookiecutter](https://github.com/audreyfeldroy/cookiecutter) and the [audreyfeldroy/cookiecutter-pypackage](https://github.com/audreyfeldroy/cookiecutter-pypackage) project template.
+David L Gibbs

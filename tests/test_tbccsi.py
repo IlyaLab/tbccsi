@@ -1,22 +1,39 @@
 #!/usr/bin/env python
 import pytest
 
+from pathlib import Path
+
 """Tests for `tbccsi` package."""
 
-# from tbccsi import tbccsi
+def test_loading_tif():
+    from tbccsi.wsi_tiler import WSITiler
+    tiler = WSITiler("TEST1", 'tests/data/test_img_1.tif', '/users/dgibbs/tmp/tbccsi_tests')
+    print(tiler.sample_id)
+    print(tiler.get_shape(0))
 
 
-@pytest.fixture
-def response():
-    """Sample pytest fixture.
-
-    See more at: http://doc.pytest.org/en/latest/fixture.html
-    """
-    # import requests
-    # return requests.get('https://github.com/audreyfeldroy/cookiecutter-pypackage')
+def test_tile_tif():
+    from tbccsi.wsi_tiler import WSITiler
+    tiler = WSITiler("TEST1", 'tests/data/test_img_1.tif', '/users/dgibbs/tmp/tbccsi_tests')
+    tiler.extract_tiles(tile_file=None, output_dir='/users/dgibbs/tmp/tbccsi_tests',save_tiles=True)
+    print("DONE")
 
 
-def test_content(response):
-    """Sample pytest test function with the pytest fixture as an argument."""
-    # from bs4 import BeautifulSoup
-    # assert 'GitHub' in BeautifulSoup(response.content).title.string
+def test_segmentation():
+    from tbccsi.wsi_segmentation import CellSegmentationProcessor as csp
+    output_dir = Path('/users/dgibbs/tmp/tbccsi_tests')
+    segs = csp(batch_size=128)
+    masks = segs.segment_tiles_from_disk(tile_file_path=output_dir/"TEST1_common_tiling.csv",
+                                         tile_input_dir=output_dir/"he_tiles",
+                                         save_masks=True,
+                                         mask_output_dir=output_dir/"segmented_tiles")
+    print("DONE with segmentation")
+    print(f"produced {len(masks)} number of masked tiles.")
+
+def test_inference():
+
+
+
+def test_heatmap():
+    from tbccsi.wsi_plot import WSIPlotter
+    plotter = WSIPlotter("TEST2",'tests/data/test_img_1.tif')
