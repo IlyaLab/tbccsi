@@ -11,8 +11,6 @@ from transformers import (
 
 from .vit_model_5_6 import VitClassification
 
-# tile based classification on cell segmented images
-
 
 class WSIInferenceEngine:
     """Handles model loading, inference on tiles, and heatmap generation."""
@@ -24,7 +22,6 @@ class WSIInferenceEngine:
         self.sample_id = None
         self.prefix = None
 
-        # Load model configuration and processor
         print(f"Loading model from {model_path}")
         self.config = ViTConfig.from_pretrained(
             "google/vit-base-patch16-224-in21k",
@@ -37,11 +34,11 @@ class WSIInferenceEngine:
             use_fast=True
         )
 
-        # Load the trained model
         self.model = VitClassification.from_pretrained(model_path, config=self.config)
         self.model.to(self.device)
         self.model.eval()
         print(f"Model loaded on {self.device}.")
+
 
     def predict_tiles(self, tiles, batch_size=32):
         """
@@ -95,50 +92,82 @@ class WSIInferenceEngine:
 
         return pd.DataFrame(results)
 
-    def load_and_predict_tiles(self, output_dir=None, tile_file_path=None, tile_input_dir=None, batch_size=32):
+
+    def predict_from_tile_file(self, tile_file_path, tile_input_dir, output_dir, batch_size=32):
+        """
+        Loads tiles from a file and runs inference in batches to conserve memory.
+        """
         print(f"Reading tile information from {tile_file_path}...")
         try:
             tile_df = pd.read_csv(tile_file_path)
-            # Ensure required columns exist
             if not {'x', 'y', 'tile_id'}.issubset(tile_df.columns):
                 raise ValueError("Tile file must contain 'x', 'y', and 'tile_id' columns.")
         except FileNotFoundError:
             print(f"Error: Tile file not found at {tile_file_path}")
-            return []
+            return None
         except Exception as e:
             print(f"Error reading tile file: {e}")
-            return []
+            return None
 
-        loaded_tiles = []
-        mask_input_dir = Path(tile_input_dir) # Convert to Path object for easier joining
+        all_results = []
+        tile_input_path = Path(tile_input_dir)
+        num_tiles = len(tile_df)
 
-        print(f"Loading {len(tile_df)} tiles from {tile_input_dir}...")
+        print(f"\nStarting inference on {num_tiles} tiles in batches of {batch_size}...")
 
-        # Use tqdm for a progress bar
-        for _, row in tqdm(tile_df.iterrows(), total=tile_df.shape[0]):
-            x, y, tile_id, mean_red, mean_green, mean_blue = int(row['x']), int(row['y']), int(row['tile_id']), float(row['mean_red']), float(row['mean_green']), float(row['mean_blue'])
+        # The main batching loop. This iterates over the DataFrame in chunks.
+        with torch.no_grad():
+            for i in tqdm(range(0, num_tiles, batch_size), desc="Processing Batches"):
+                # 1. Get a chunk of the DataFrame
+                batch_df = tile_df.iloc[i:i + batch_size]
 
-            # Reconstruct the file path using the same logic as the saving function
-            collection_index = tile_id // 1000
-            collection_dir = mask_input_dir / f'collection_{collection_index}'
-            file_name = f"masked_{tile_id:06d}_x{x}_y{y}.png"
-            image_path = collection_dir / file_name
+                batch_images = []
+                batch_metadata = []
 
-            try:
-                # Open the image file
-                with Image.open(image_path) as img:
-                    # Load the image data into memory and convert to RGB
-                    masked_pil_image = img.convert("RGB").copy()
-                    loaded_tiles.append((masked_pil_image, x, y, tile_id, mean_red, mean_green, mean_blue))
-            except FileNotFoundError:
-                print(f"Warning: Tile file not found, skipping: {image_path}")
-            except Exception as e:
-                print(f"Warning: Could not load file {image_path}. Error: {e}")
+                # 2. Load only the images for the current batch
+                for _, row in batch_df.iterrows():
+                    x, y, tile_id = int(row['x']), int(row['y']), int(row['tile_id'])
 
-        predictions_df = self.predict_tiles(loaded_tiles, batch_size)
+                    collection_index = tile_id // 1000
+                    collection_dir = tile_input_path / f'collection_{collection_index}'
+                    file_name = f"masked_{tile_id:06d}_x{x}_y{y}.png"
+                    image_path = collection_dir / file_name
 
-        predictions_path = output_dir / f"{self.sample_id}_{self.prefix}_preds.csv"
+                    try:
+                        with Image.open(image_path) as img:
+                            batch_images.append(img.convert("RGB"))
+                            batch_metadata.append({'tile_id': tile_id, 'x_coord': x, 'y_coord': y})
+                    except FileNotFoundError:
+                        # If a tile is missing, we skip it and its metadata
+                        print(f"Warning: Tile file not found, skipping: {image_path}")
+
+                # If no images were loaded in this batch (e.g., all were missing), continue
+                if not batch_images:
+                    continue
+
+                # 3. Process and predict on the current batch of images
+                inputs = self.processor(images=batch_images, return_tensors="pt")
+                pixel_values = inputs["pixel_values"].to(self.device)
+
+                outputs = self.model(pixel_values=pixel_values)
+                logits = outputs.logits
+                probabilities = torch.softmax(logits, dim=1)
+                predictions = torch.argmax(logits, dim=1)
+
+                # 4. Store results for the batch
+                for j, metadata in enumerate(batch_metadata):
+                    metadata.update({
+                        'predicted_class': predictions[j].item(),
+                        'prob_class_0': probabilities[j, 0].item(),
+                        'prob_class_1': probabilities[j, 1].item(),
+                        'confidence': torch.max(probabilities[j]).item()
+                    })
+                    all_results.append(metadata)
+
+        # After the loop, create the final DataFrame and save it
+        predictions_df = pd.DataFrame(all_results)
+        predictions_path = Path(output_dir) / f"{self.sample_id}_{self.prefix}_preds.csv"
         predictions_df.to_csv(predictions_path, index=False)
 
-        print(f"Predictions saved to {predictions_path}")
-        return(predictions_df)
+        print(f"\nPredictions saved to {predictions_path}")
+        return predictions_df

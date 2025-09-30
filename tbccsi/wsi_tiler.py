@@ -192,16 +192,18 @@ class WSITiler:
         mean_blue = np.mean(tile_array[:, :, 2])
 
         # Append the full tuple with image data and stats
-        self.tiles.append((tile_image_rgb, x, y, tile_id, mean_red, mean_green, mean_blue))
-
-        # and write them if needed:
         if tile_path is not None:
+            self.tiles.append((None, x, y, tile_id, mean_red, mean_green, mean_blue))
+            # and write them if needed:
             os.makedirs(os.path.dirname(tile_path), exist_ok=True)
             tile_image_rgb.save(tile_path)
-
+        else:
+            # keep it in memory
+            self.tiles.append((tile_image_rgb, x, y, tile_id, mean_red, mean_green, mean_blue))
+        # return where we're at
         return(len(self.tiles))
 
-    def extract_tiles(self, tile_file=None, output_dir=None, save_tiles=False, extract_test=False):
+    def extract_tiles(self, save_tiles=False):
         """
         Creates a tiling or uses an existing one to extract tiles from a whole slide image.
 
@@ -214,11 +216,8 @@ class WSITiler:
         Args:
             tile_file (str, optional): Path to a CSV file with 'x', 'y', 'tile_id' columns.
                                        If None, a new tiling is generated. Defaults to None.
-            output_dir (str, optional): Directory to save tile images. Defaults to None.
-            save_tiles (bool, optional): If True, saves extracted tiles to `output_dir`.
+            save_tiles (bool, optional): If True, saves extracted tiles to `output_dir`, otherwise keeps it in memory
                                          Defaults to False.
-            extract_test (bool, optional): If True, stops after `self.testn` tiles for testing.
-                                           Defaults to False.
 
         Returns:
             list: A list of tuples, where each tuple is (tile_image, x, y, tile_id).
@@ -234,18 +233,20 @@ class WSITiler:
         #  PATH 1: A tile file IS provided, check for existing images.
         #          if tile file doesn't exist, use the tiling to crop img
         # =============================================================================
-        if tile_file and os.path.isfile(tile_file):
-            print(f"Loading tile coordinates from: {tile_file}")
+
+        if self.tile_file and os.path.isfile(self.tile_file):
+            print(f"Loading tile coordinates from: {self.tile_file}")
             try:
-                tiles_df = pd.read_csv(tile_file)
+                tiles_df = pd.read_csv(self.tile_file)
                 print(f"Found {len(tiles_df)} tiles to process.")
             except FileNotFoundError:
-                print(f"Error: Tile file not found at {tile_file}... creating new file.")
+                print(f"Error: Tile file not found at {self.tile_file}... creating new file.")
                 exit()
+
             for i, row in tqdm(tiles_df.iterrows(), total=len(tiles_df), desc="Extracting from file"):
                 x, y, tile_id = int(row['x']), int(row['y']), int(row['tile_id'])
                 tile_rgb = None
-                ### Check if tile image already exists ###
+                ### Build the path ###
                 if self.output_path:
                     collection_index = i // 1000  # Use loop index to find the correct folder
                     collection_dir = os.path.join(he_dir, f'collection_{collection_index}')
@@ -254,19 +255,18 @@ class WSITiler:
                     if os.path.exists(expected_path):
                         # If it exists, load it from disk
                         tile_rgb = Image.open(expected_path).convert('RGB')
-
                 # If the tile wasn't loaded from a file, extract it from the slide
                 if tile_rgb is None:
-                    tile_raw = self.read_region(
+                    tile_raw = self._read_region(
                         (int(x * level_downsample), int(y * level_downsample)),
                         self.level,
                         (self.tile_size, self.tile_size)
                     )
                     tile_rgb = tile_raw.convert('RGB')
                     # Now, process the tile (whether loaded or extracted) and SAVE
+                if save_tiles: # write to disk
                     self._process_and_append_tile(tile_rgb, x, y, tile_id, expected_path)
-                else:
-                # then it was but we'll append it to the list
+                else:          # keep in memory
                     self._process_and_append_tile(tile_rgb, x, y, tile_id, None)
 
         # =================================================================================
@@ -274,14 +274,15 @@ class WSITiler:
         # =================================================================================
         else:
             print("No tile file found. Generating tiling and extracting on the fly...")
-            print("... writing tiles to:  " + str(he_dir))
+            if save_tiles:
+                print("... writing tiles to:  " + str(he_dir))
+
             step_size = self.tile_size - self.overlap
             tile_id = 0
-
             # Create a progress bar for the outer loop
             y_coords = range(0, level_dims[1] - self.tile_size + 1, step_size)
             pbar = tqdm(total=len(y_coords), desc="Scanning slide")
-
+            # for each grid location (y,x)
             for y in y_coords:
                 for x in range(0, level_dims[0] - self.tile_size + 1, step_size):
                     try:
@@ -314,6 +315,7 @@ class WSITiler:
                 pbar.update(1)
             pbar.close()
 
+            # lastly, write out the new tile file.
             if self.output_path:
                 # 1. Create a new list of tuples, slicing off the first element from each
                 data_for_df = [t[1:] for t in self.tiles]

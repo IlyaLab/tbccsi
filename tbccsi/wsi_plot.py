@@ -1,6 +1,7 @@
 
 import pandas as pd
 import numpy as np
+from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from .wsi_tiler import WSITiler
@@ -12,6 +13,10 @@ class WSIPlotter:
         self.sample = sample
         self.slide = slide
         self.output_dir = output_dir
+        if self.slide:
+            self.tiler = WSITiler(sample, slide, output_dir)
+        else:
+            self.tiler=None
 
     def pred_heatmap(self, file_name, predictions_df, point_size=3, prob_col="prob_class_1"):
         """
@@ -117,6 +122,8 @@ class WSIPlotter:
         if isinstance(tile_file, str):
             # Skip comment lines that start with #
             df = pd.read_csv(tile_file, comment='#')
+        elif isinstance(tile_file, Path):
+            df = pd.read_csv(tile_file, comment='#')
         else:
             df = tile_file.copy()
 
@@ -133,9 +140,9 @@ class WSIPlotter:
             tile_size = (tile_size, tile_size)
 
         # Normalize RGB values to 0-1 range (assuming they're 0-255)
-        df['norm_red'] = df['mean_r'] / 255.0
-        df['norm_green'] = df['mean_g'] / 255.0
-        df['norm_blue'] = df['mean_b'] / 255.0
+        df['norm_red'] = df['mean_red'] / 255.0
+        df['norm_green'] = df['mean_green'] / 255.0
+        df['norm_blue'] = df['mean_blue'] / 255.0
 
         # Clamp values to valid range
         df['norm_red'] = df['norm_red'].clip(0, 1)
