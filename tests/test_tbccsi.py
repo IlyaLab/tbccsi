@@ -84,3 +84,15 @@ def test_mean_heatmap():
     plotter.tile_mean_heatmap(output_dir/"TEST1_common_tiling.csv",
                               output_dir/'mean_color_tiles.png')
     print("DONE with mean color heatmap")
+
+
+def test_pred_grid_plot():
+    from tbccsi.wsi_plot import WSIPlotter
+    output_dir = Path('/users/dgibbs/tmp/tbccsi_tests')
+    p = WSIPlotter()  ## NO PARAMS !
+    p.plot_prediction_grid(output_dir/"TestID_cancer_preds.csv",
+                           output_dir/"segmented_tiles",
+                           "prob_class_1",
+                           output_dir/'pred_grid.png',
+                           grid_size=(8, 4),
+                           tile_size=224)

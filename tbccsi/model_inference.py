@@ -171,3 +171,62 @@ class WSIInferenceEngine:
 
         print(f"\nPredictions saved to {predictions_path}")
         return predictions_df
+
+    def merge_predictions(prediction_files, prefixes, output_path):
+        """
+        Merges multiple prediction CSVs into a single file with renamed columns.
+
+        Args:
+            prediction_files (list): A list of paths to the prediction CSV files.
+            prefixes (list): A list of prefixes to use for renaming columns.
+            output_path (str or Path): The path to save the final merged CSV.
+        """
+        if len(prediction_files) != len(prefixes):
+            raise ValueError("The number of prediction files must equal the number of prefixes.")
+
+        if not prediction_files:
+            print("No prediction files provided to merge.")
+            return None
+
+        # --- Load the first file as the base for our merge ---
+        print(f"Loading base file: {prediction_files[0]}")
+        merged_df = pd.read_csv(prediction_files[0])
+
+        # Define the columns to be renamed
+        rename_map = {
+            'predicted_class': f"pred_{prefixes[0]}",
+            'prob_class_0': f"prob0_{prefixes[0]}",
+            'prob_class_1': f"prob1_{prefixes[0]}",
+            'confidence': f"conf_{prefixes[0]}"
+        }
+        merged_df.rename(columns=rename_map, inplace=True)
+
+        # --- Loop through the rest of the files and merge them ---
+        for i in range(1, len(prediction_files)):
+            file_path = prediction_files[i]
+            prefix = prefixes[i]
+            print(f"Merging file: {file_path}")
+
+            next_df = pd.read_csv(file_path)
+
+            # Define the columns to rename for the current file
+            rename_map = {
+                'predicted_class': f"pred_{prefix}",
+                'prob_class_0': f"prob0_{prefix}",
+                'prob_class_1': f"prob1_{prefix}",
+                'confidence': f"conf_{prefix}"
+            }
+            next_df.rename(columns=rename_map, inplace=True)
+
+            # Perform an outer merge to keep all tiles from both files
+            merged_df = pd.merge(
+                merged_df,
+                next_df,
+                on=['tile_id', 'x_coord', 'y_coord'],
+                how='outer'
+            )
+
+        # --- Save the final merged DataFrame ---
+        merged_df.to_csv(output_path, index=False)
+        print(f"\n✅ Merged predictions saved to: {output_path}")
+        return merged_df

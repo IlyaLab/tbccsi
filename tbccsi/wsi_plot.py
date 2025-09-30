@@ -4,6 +4,7 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+from PIL import Image, ImageDraw, ImageFont
 from .wsi_tiler import WSITiler
 
 class WSIPlotter:
@@ -188,3 +189,106 @@ class WSIPlotter:
             plt.savefig(output_path)
 
         return fig, ax, df
+
+    def plot_prediction_grid(self,
+                             prediction_file_path,
+                             tile_source_dir,
+                             prediction_column,
+                             output_path,
+                             grid_size=(8, 4),
+                             tile_size=224):
+        """
+        Creates a grid of tiles with the highest and lowest prediction scores.
+
+        The top half of the grid shows the highest-scoring tiles, and the
+        bottom half shows the lowest-scoring tiles.
+
+        Args:
+            prediction_file_path (str or Path): Path to the merged prediction CSV.
+            tile_source_dir (str or Path): Directory containing the tile images.
+            prediction_column (str): The column in the CSV to sort by (e.g., 'conf_cancer').
+            output_path (str or Path): Path to save the output grid image.
+            grid_size (tuple): A (columns, rows) tuple for each half of the grid.
+            tile_size (int): The pixel size for each tile in the grid.
+        """
+        print(f"Generating prediction grid for column: '{prediction_column}'")
+
+        # 1. Load and sort the prediction data
+        try:
+            df = pd.read_csv(prediction_file_path)
+            if prediction_column not in df.columns:
+                raise ValueError(f"Prediction column '{prediction_column}' not found in CSV.")
+        except FileNotFoundError:
+            print(f"Error: Prediction file not found at {prediction_file_path}")
+            return
+
+        num_tiles_per_half = grid_size[0] * grid_size[1]
+
+        # Get the highest and lowest probability tiles
+        high_prob_tiles = df.sort_values(by=prediction_column, ascending=False).head(num_tiles_per_half)
+        low_prob_tiles = df.sort_values(by=prediction_column, ascending=True).head(num_tiles_per_half)
+
+        # 2. Create the canvas for the final grid image
+        grid_cols, grid_rows_half = grid_size
+        canvas_width = grid_cols * tile_size
+        canvas_height = (2 * grid_rows_half) * tile_size
+        canvas = Image.new('RGB', (canvas_width, canvas_height), 'white')
+        draw = ImageDraw.Draw(canvas)
+
+        # 3. Paste tiles onto the canvas
+        self._paste_tiles_to_grid(canvas, high_prob_tiles, tile_source_dir, grid_size, tile_size, 0)
+        self._paste_tiles_to_grid(canvas, low_prob_tiles, tile_source_dir, grid_size, tile_size, canvas_height // 2)
+
+        # Optional: Add labels to distinguish the two halves
+        try:
+            font = ImageFont.truetype("arial.ttf", 32)
+        except IOError:
+            font = ImageFont.load_default()  # Fallback font
+
+        draw.text((10, 10), f"Highest '{prediction_column}' Tiles", fill="black", font=font)
+        draw.text((10, 10 + canvas_height // 2), f"Lowest '{prediction_column}' Tiles", fill="black", font=font)
+
+        # 4. Save the final image
+        canvas.save(output_path)
+        print(f"✅ Prediction grid saved to: {output_path}")
+
+    def _paste_tiles_to_grid(self, canvas, tile_df, tile_source_dir, grid_size, tile_size, y_offset):
+        """Helper method to paste a set of tiles onto the canvas."""
+        grid_cols, grid_rows = grid_size
+        tile_source_path = Path(tile_source_dir)
+
+        for index, tile_info in enumerate(tile_df.itertuples()):
+            row = index // grid_cols
+            col = index % grid_cols
+
+            # Reconstruct the file path based on your saving logic
+            collection_index = tile_info.tile_id // 1000
+            collection_dir = tile_source_path / f'collection_{collection_index}'
+            # Assuming you saved H&E tiles with a name like this
+            if 'segmented' in str(tile_source_path):
+                file_name = f"masked_{tile_info.tile_id:06d}_x{tile_info.x_coord}_y{tile_info.y_coord}.png"
+            else:
+                file_name = f"tile_{tile_info.tile_id:06d}_x{tile_info.x_coord}_y{tile_info.y_coord}.png"
+            image_path = collection_dir / file_name
+
+            print(image_path)
+
+            try:
+                tile_img = Image.open(image_path).resize((tile_size, tile_size))
+            except FileNotFoundError:
+                tile_img = self._create_placeholder_tile(tile_size, f"Missing:\n{tile_info.tile_id}")
+
+            paste_x = col * tile_size
+            paste_y = row * tile_size + y_offset
+            canvas.paste(tile_img, (paste_x, paste_y))
+
+    def _create_placeholder_tile(self, size, text):
+        """Creates a black tile with text for missing images."""
+        img = Image.new('RGB', (size, size), 'black')
+        draw = ImageDraw.Draw(img)
+        try:
+            font = ImageFont.truetype("arial.ttf", 20)
+        except IOError:
+            font = ImageFont.load_default()
+        draw.text((10, size // 2 - 20), text, fill="white", font=font)
+        return img
