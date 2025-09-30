@@ -3,10 +3,10 @@ from pathlib import Path
 import torch
 
 # tile based classification on cell segmented images
-from wsi_tiler import WSITiler
-from wsi_segmentation import CellSegmentationProcessor
-from model_inference import WSIInferenceEngine
-from wsi_plot import WSIPlotter
+from .wsi_tiler import WSITiler
+from .wsi_segmentation import CellSegmentationProcessor
+from .model_inference import WSIInferenceEngine
+from .wsi_plot import WSIPlotter
 
 
 ######### RUN PREDICTION ############################################################3
