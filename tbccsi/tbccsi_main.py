@@ -28,14 +28,44 @@ def run_preds(sample_id,   # sample ID (string)
     min_tissue_ratio = 0.1
     tiles = None
 
+    from PIL import ImageFile
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+
     print("\n-----------------------------------------")
     print("Checking if CUDA available: " + str(torch.cuda.is_available()))
     print("-----------------------------------------\n")
 
-
     # Create output directory
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+    # Create the tile file path.
+    tile_file_path = output_dir / tile_file  # Re-construct the expected path
+
+    if not use_segmented and tile_file_path.exists():
+        # If we are NOT using segmented tiles AND the tile file already exists,
+        # we can assume the tiling step was done previously.
+        # However, the user intent suggests if a file is provided, it must be used.
+        pass  # Allow the existing file to be used by tiler.extract_tiles later
+    elif not use_segmented:
+        # If we are extracting new tiles, the tile file shouldn't exist yet,
+        # but the logic for checking depends on how WSITiler handles pre-existing files.
+        # For the strict 'stop if given file doesn't exist' logic, we check the input:
+            # The simplest place to put the check is inside the inference loop,
+            # but this catches it much earlier and prevents unnecessary segmentation.
+        pass
+        # Let's check for the existence of the file that will be used for INFERENCE.
+        # The crucial tile file is needed for the inference loop later.
+        # We will assume that if 'use_segmented' is True, the file MUST exist already.
+        # If 'use_segmented' is False, the tile file will be CREATED by the tiler.
+
+    if use_segmented:
+        # Check if the file required for INFERENCE is present
+        inference_tile_file = output_dir / Path(tile_file)
+        if not inference_tile_file.exists():
+            print(f"\nERROR: 'use_segmented' is True, but the required tile file was not found:")
+            print(f"Path: {inference_tile_file}")
+            print("Please ensure tiling has been completed or set 'use_segmented=False'.")
+            return
 
     # Reads the slide, and extracts raw tiles
     tiler = WSITiler(sample_id,
@@ -71,6 +101,10 @@ def run_preds(sample_id,   # sample ID (string)
                                output_dir=output_dir,
                                batch_size=batch_size
                            ))
+        if predictions_df is None:
+            print(f"Skipping prediction saving and plotting for prefix '{prefix}' (predictions_df is None).")
+            continue # Move to the next item in the zip iterator
+
         # Save results
         predictions_path = output_dir / f"{sample_id}_{prefix}_preds.csv"
         predictions_df.to_csv(predictions_path, index=False)
@@ -80,7 +114,7 @@ def run_preds(sample_id,   # sample ID (string)
         print("Building Heatmap...")
         try:
             heatmap_path = output_dir / f"{sample_id}_{prefix}_heatmap.png"
-            plotter = WSIPlotter(sample_id, tiler._slide)
+            plotter = WSIPlotter(sample_id, input_slide)
             plotter.create_heatmap(predictions_df, heatmap_path, point_size=4, prob_col="prob_class_1")
         except Exception as e:
             print("heatmap failed..." + str(e))

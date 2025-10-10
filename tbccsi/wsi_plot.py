@@ -10,16 +10,16 @@ from .wsi_tiler import WSITiler
 class WSIPlotter:
     """Handles model loading, inference on tiles, and heatmap generation."""
 
-    def __init__(self, sample=None, slide=None, output_dir=None):
+    def __init__(self, sample=None, slide_path=None, output_dir=None):
         self.sample = sample
-        self.slide = slide
+        self.slide = slide_path
         self.output_dir = output_dir
         if self.slide:
-            self.tiler = WSITiler(sample, slide, output_dir)
+            self.tiler = WSITiler(sample, slide_path, output_dir)
         else:
             self.tiler=None
 
-    def pred_heatmap(self, file_name, predictions_df, point_size=3, prob_col="prob_class_1"):
+    def create_heatmap(self, predictions_df, output_path, file_name, point_size=3, prob_col="prob_class_1"):
         """
         Creates and saves a heatmap visualization of predictions overlaid on the slide.
 
@@ -102,7 +102,7 @@ class WSIPlotter:
 
         # Finalize and save the figure
         plt.tight_layout()
-        plt.savefig(self.output_dir/file_name, dpi=300, bbox_inches='tight')
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
         print(f"Heatmap saved to {self.output_dir/file_name}")
 
