@@ -1,8 +1,10 @@
 # tbccsi
 
-[//]:![PyPI version](https://img.shields.io/pypi/v/tbccsi.svg)
-[//]:[![Documentation Status](https://readthedocs.org/projects/tbccsi/badge/?version=latest)]
-[//]:(https://tbccsi.readthedocs.io/en/latest/?version=latest)
+[//]: # ![PyPI version](https://img.shields.io/pypi/v/tbccsi.svg)
+
+[//]: # [![Documentation Status](https://readthedocs.org/projects/tbccsi/badge/?version=latest)]
+
+[//]: # (https://tbccsi.readthedocs.io/en/latest/?version=latest)
 
 Tile based classification on cell segmented images
 
