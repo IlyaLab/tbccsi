@@ -97,5 +97,29 @@ for i in range(5):
 
 ```
 
+## Plotting heatmaps
+
+```
+#!/usr/bin/env python
+
+from pathlib import Path
+import pandas as pd
+from tbccsi.wsi_plot import WSIPlotter
+
+result_dir = Path('/results/')
+
+slide_dir = Path('/slides/')
+
+plotter = WSIPlotter(sample="sample_name",
+                     slide=slide_dir/"slide_file_name.svs",
+                     output_dir=result_dir)
+
+predictions_df = pd.read_csv(result_dir/'predictions.csv')
+
+plotter.tile_heatmap("my_heatmap.pdf", predictions_df, point_size=3, prob_col="prob_class_1")
+
+print("all done!")
+```
+
 ## Credits
 David L Gibbs
