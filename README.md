@@ -19,6 +19,7 @@ Tile based classification on cell segmented images
 
 ## Using the CLI for the full pipeline.
 
+```
 tbccsi \
   --sample-id   SH_8_Pre \
   --input-slide "slides/SH-8 Pre/SH-8 Pre.svs" \
@@ -37,12 +38,14 @@ tbccsi \
   --batch-size  128 \
   --save-h-and-e-tiles \
   --save-segmented-tiles
-    
+```
+  
 This call supposes you have a set of models in a 'models' directory, and that each model
 will be labeled (in the output file names) by the appropriate prefix.
 
 ## Using the library
 
+```
 #!/usr/bin/env python
 
 from pathlib import Path
@@ -92,7 +95,7 @@ for i in range(5):
                                            batch_size=256)
 
 
-
+```
 
 ## Credits
 David L Gibbs
