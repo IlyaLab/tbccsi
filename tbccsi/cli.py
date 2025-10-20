@@ -24,6 +24,7 @@ def run(
     models: List[Path] = typer.Option(..., "-m", "--models", help="One or more paths to the trained models."),
     prefixes: List[str] = typer.Option(..., "-p", "--prefixes", help="Column header labels for each model."),
     batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
+    do_inference: bool = typer.Option(True, "--do-inference", help="Run model inference?")
     use_segmented_tiles: bool = typer.Option(False, "--use-segmented-tiles", help="Use pre-segmented tiles if available."),
     save_segmented_tiles: bool = typer.Option(False, "--save-segmented-tiles", help="If set, save the extracted and segmented tiles to disk."),
     save_h_and_e_tiles: bool = typer.Option(False, "--save-h-and-e-tiles", help="If set, save the extracted H&E tiles to disk.")
@@ -45,6 +46,7 @@ def run(
         model_list=models,
         prefix_list=prefixes,
         batch_size=batch_size,
+        do_inference=do_inference,
         use_segmented=use_segmented_tiles,
         save_segmented_tiles=save_segmented_tiles,
         save_h_and_e_tiles=save_h_and_e_tiles

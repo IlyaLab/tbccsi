@@ -328,3 +328,91 @@ class WSITiler:
         print(f"\n✅ Extracted {len(self.tiles)} valid tiles.")
         return self.tiles
 
+    def create_tile_file(self, save_tiles=False):
+        """
+        Generates a tile coordinate file if it doesn't exist.
+
+        This method DOES NOT extract or return tile images to avoid memory issues.
+        It scans the slide, finds tissue, and saves the (x, y) coordinates
+        (at level 0) to the CSV file specified in `self.tile_file`.
+
+        Args:
+            save_tiles (bool): This argument is IGNORED. Tiles are never
+                               saved or held in memory by this function.
+
+        Returns:
+            pathlib.Path: The path to the tile coordinate file.
+        """
+        if not self.tile_file:
+            raise ValueError("self.tile_file path must be set to generate coordinates.")
+
+        if self.tile_file.exists():
+            print(f"Tile coordinate file already exists: {self.tile_file}")
+            return self.tile_file
+
+        print(f"Generating new tile coordinate file: {self.tile_file}")
+
+        level_dims = self.level_dimensions[self.level]
+        # We get the downsample factor for *this* level
+        level_downsample = self.level_downsamples[self.level]
+
+        step_size = self.tile_size - self.overlap
+        tile_id = 0
+        coords_data = []  # Local list to hold coordinates
+
+        # Iterate over the slide at the *target level's* dimensions
+        y_coords = range(0, level_dims[1] - self.tile_size + 1, step_size)
+        pbar = tqdm(total=len(y_coords), desc="Scanning slide for tissue")
+
+        for y_lvl in y_coords:
+            for x_lvl in range(0, level_dims[0] - self.tile_size + 1, step_size):
+
+                # Convert level-specific coords (x_lvl, y_lvl) to level 0 coords
+                # These are the coords OpenSlide.read_region expects
+                x_lvl0 = int(x_lvl * level_downsample)
+                y_lvl0 = int(y_lvl * level_downsample)
+
+                try:
+                    # Read region using level 0 coords
+                    tile = self._read_region(
+                        (x_lvl0, y_lvl0),
+                        self.level,
+                        (self.tile_size, self.tile_size)
+                    )
+                    tile_rgb = tile.convert('RGB')
+
+                    # Check if tile contains tissue
+                    if self._is_tissue_tile(tile_rgb):
+                        # Get color stats
+                        tile_array = np.array(tile_rgb)
+                        mean_red = np.mean(tile_array[:, :, 0])
+                        mean_green = np.mean(tile_array[:, :, 1])
+                        mean_blue = np.mean(tile_array[:, :, 2])
+
+                        # Store the LEVEL 0 coordinates
+                        coords_data.append((x_lvl0, y_lvl0, tile_id, mean_red, mean_green, mean_blue))
+                        tile_id += 1  # Only increment for valid tissue tiles
+
+                except Exception as e:
+                    print(f"Error checking tile at (L{self.level} x:{x_lvl}, y:{y_lvl}): {e}")
+
+            pbar.update(1)
+        pbar.close()
+
+        if not coords_data:
+            print("WARNING: No valid tissue tiles were found.")
+
+        # Write out the new tile file with level 0 coordinates
+        column_names = ['x', 'y', 'tile_id', 'mean_red', 'mean_green', 'mean_blue']
+        df = pd.DataFrame(coords_data, columns=column_names)
+
+        # Ensure the directory exists
+        self.tile_file.parent.mkdir(parents=True, exist_ok=True)
+        df.to_csv(self.tile_file, index=False)
+
+        print(f"\n✅ Generated coordinate file with {len(coords_data)} tiles.")
+        print(f"File saved to: {self.tile_file}")
+
+        self.tiles = []  # Ensure this is empty
+
+        return self.tile_file
