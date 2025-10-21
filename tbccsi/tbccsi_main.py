@@ -1,6 +1,8 @@
 
 from pathlib import Path
 import torch
+import pandas as pd
+import numpy as np
 
 # tile based classification on cell segmented images
 from .wsi_tiler import WSITiler
