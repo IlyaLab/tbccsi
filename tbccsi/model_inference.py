@@ -9,20 +9,21 @@ from transformers import (
     AutoImageProcessor,
 )
 
-from .vit_model_5_6 import VitClassification
+from .vit_model_5_7 import VitClassification
 
 
 class WSIInferenceEngine:
     """Handles model loading, inference on tiles, and heatmap generation."""
 
-    def __init__(self, model_path, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, model_path, tile_map_df=None, device='cuda' if torch.cuda.is_available() else 'cpu'):
         """Initializes the inference engine."""
         self.device = device
         self.model_path = model_path
         self.sample_id = None
         self.prefix = None
+        self.tile_map_df = tile_map_df
 
-        print(f"Loading model from {model_path}")
+        print(f"Loading model 5.7 from {model_path}")
         self.config = ViTConfig.from_pretrained(
             "google/vit-base-patch16-224-in21k",
             num_labels=2,
@@ -93,27 +94,31 @@ class WSIInferenceEngine:
         return pd.DataFrame(results)
 
 
-    def predict_from_tile_file(self, tile_file_path, tile_input_dir, output_dir, batch_size=32):
+    def run_inference(self, output_dir, batch_size=32):
         """
-        Loads tiles from a file and runs inference in batches to conserve memory.
+        Runs inference on the pre-loaded self.tile_map_df.
+
+        self.tile_map_df is expected to have 'x', 'y', 'tile_id', and 'file_path' columns.
         """
-        print(f"Reading tile information from {tile_file_path}...")
-        try:
-            tile_df = pd.read_csv(tile_file_path)
-            if not {'x', 'y', 'tile_id'}.issubset(tile_df.columns):
-                raise ValueError("Tile file must contain 'x', 'y', and 'tile_id' columns.")
-        except FileNotFoundError:
-            print(f"Error: Tile file not found at {tile_file_path}")
+        # 1. Check if the tile map is valid
+        print(f"Reading tile information from self.tile_map_df...")
+        if self.tile_map_df is None or self.tile_map_df.empty:
+            print("Error: self.tile_map_df is not loaded. Cannot run inference.")
             return None
-        except Exception as e:
-            print(f"Error reading tile file: {e}")
+
+        # Use a local variable for convenience
+        tile_df = self.tile_map_df
+
+        required_cols = {'x', 'y', 'tile_id', 'file_path'}
+        if not required_cols.issubset(tile_df.columns):
+            missing = required_cols - set(tile_df.columns)
+            print(f"Error: self.tile_map_df is missing required columns: {missing}")
             return None
 
         all_results = []
-        tile_input_path = Path(tile_input_dir)
         num_tiles = len(tile_df)
 
-        print(f"\nStarting inference on {num_tiles} tiles in batches of {batch_size}...")
+        print(f"\nStarting inference on {num_tiles} mapped tiles in batches of {batch_size}...")
 
         # The main batching loop. This iterates over the DataFrame in chunks.
         with torch.no_grad():
@@ -126,26 +131,33 @@ class WSIInferenceEngine:
 
                 # 2. Load only the images for the current batch
                 for _, row in batch_df.iterrows():
-                    x, y, tile_id = int(row['x']), int(row['y']), int(row['tile_id'])
 
-                    collection_index = tile_id // 1000
-                    collection_dir = tile_input_path / f'collection_{collection_index}'
-                    file_name = f"masked_{tile_id:06d}_x{x}_y{y}.png"
-                    image_path = collection_dir / file_name
+                    # --- THIS IS THE KEY CHANGE ---
+                    # We get all data directly from the row.
+                    # The complex path-building logic is gone.
+                    tile_id = int(row['tile_id'])
+                    x = int(row['x'])
+                    y = int(row['y'])
+                    image_path = Path(row['file_path'])  # Use the pre-scanned path
+                    # --- END OF CHANGE ---
 
                     try:
                         with Image.open(image_path) as img:
                             batch_images.append(img.convert("RGB"))
+                            # Store the coordinates from the map
                             batch_metadata.append({'tile_id': tile_id, 'x_coord': x, 'y_coord': y})
                     except FileNotFoundError:
                         # If a tile is missing, we skip it and its metadata
                         print(f"Warning: Tile file not found, skipping: {image_path}")
+                    except Exception as e:
+                        print(f"Warning: Error loading {image_path}, skipping: {e}")
 
                 # If no images were loaded in this batch (e.g., all were missing), continue
                 if not batch_images:
                     continue
 
                 # 3. Process and predict on the current batch of images
+                # (This logic is identical to your original function)
                 inputs = self.processor(images=batch_images, return_tensors="pt")
                 pixel_values = inputs["pixel_values"].to(self.device)
 
@@ -155,6 +167,7 @@ class WSIInferenceEngine:
                 predictions = torch.argmax(logits, dim=1)
 
                 # 4. Store results for the batch
+                # (This logic is identical to your original function)
                 for j, metadata in enumerate(batch_metadata):
                     metadata.update({
                         'predicted_class': predictions[j].item(),
@@ -165,12 +178,29 @@ class WSIInferenceEngine:
                     all_results.append(metadata)
 
         # After the loop, create the final DataFrame and save it
+        if not all_results:
+            print("Error: No tiles were successfully processed. No predictions saved.")
+            return None
+
         predictions_df = pd.DataFrame(all_results)
+
+        # Merge with original tile_map_df to retain all coordinate info
+        # This ensures the final CSV has 'x', 'y', 'mean_r', etc.
+        # We merge on 'tile_id' but use the coords from the results for robustness.
+        final_df = tile_df.merge(predictions_df, on='tile_id', how='right',
+                                 suffixes=('_orig', None))
+
+        # Clean up columns: drop redundant x/y coords
+        if 'x_coord' in final_df.columns:
+            final_df = final_df.drop(columns=['x_coord_orig', 'y_coord_orig'], errors='ignore')
+            final_df = final_df.rename(columns={'x_coord': 'x', 'y_coord': 'y'})
+
         predictions_path = Path(output_dir) / f"{self.sample_id}_{self.prefix}_preds.csv"
-        predictions_df.to_csv(predictions_path, index=False)
+        final_df.to_csv(predictions_path, index=False)
 
         print(f"\nPredictions saved to {predictions_path}")
-        return predictions_df
+        return final_df
+
 
     def merge_predictions(prediction_files, prefixes, output_path):
         """

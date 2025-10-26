@@ -8,6 +8,7 @@ from PIL import Image
 from tqdm import tqdm
 from cellpose import models, core, io
 from collections import deque
+import re
 
 
 class CellSegmentationProcessor:
@@ -220,3 +221,72 @@ class CellSegmentationProcessor:
         print(f"Successfully loaded {len(loaded_tiles)} tiles from disk.")
         return loaded_tiles
 
+
+    def map_tile_ids_to_paths(self, tile_file_path: Path, tile_input_dir: Path) -> pd.DataFrame:
+        """
+        Scans a directory for image files and maps them to tile_ids from a CSV.
+
+        Args:
+            tile_file_path: Path to the tile coordinate CSV file (e.g., 'tile_file.csv').
+            tile_input_dir: Path to the top-level directory containing segmented tiles
+                            (e.g., '.../segmented_tiles/').
+
+        Returns:
+            A pandas DataFrame based on the input CSV, but with an added
+            'file_path' column. Rows for which no matching file was found
+            are dropped.
+        """
+        print(f"Scanning for tiles in: {tile_input_dir}")
+
+        # 1. Find all image files recursively
+        image_extensions = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
+        all_image_paths = [
+            p for p in tile_input_dir.rglob("*")
+            if p.suffix.lower() in image_extensions
+        ]
+
+        if not all_image_paths:
+            print(f"Warning: No image files found in {tile_input_dir}")
+            return pd.DataFrame()
+
+        # 2. Build a map from an extracted tile_id (int) to its file_path (Path)
+        path_map = {}
+        for path in all_image_paths:
+            # Use regex to find all numbers in the filename
+            # e.g., "tile_1056.png" -> ["1056"]
+            # e.g., "slide_v2_1056_mask.png" -> ["2", "1056"]
+            numbers = re.findall(r'\d+', path.stem)
+
+            if numbers:
+                # Assume the *first* number is the unique tile_id
+                try:
+                    tile_id = int(numbers[0])
+                    if tile_id in path_map:
+                        print(f"Warning: Duplicate tile_id {tile_id} found. "
+                              f"Overwriting {path_map[tile_id].name} with {path.name}")
+                    path_map[tile_id] = path
+                except ValueError:
+                    pass  # Not a valid integer
+
+        print(f"Found {len(all_image_paths)} image files, mapped {len(path_map)} unique tile IDs.")
+
+        # 3. Load the tile coordinate CSV
+        try:
+            df = pd.read_csv(tile_file_path, comment='#')
+        except FileNotFoundError:
+            print(f"Error: Tile coordinate file not found at {tile_file_path}")
+            return pd.DataFrame()
+
+        # 4. Map the tile_id column to the file paths
+        df['file_path'] = df['tile_id'].map(path_map)
+
+        # 5. Report and drop any missing tiles
+        missing_count = df['file_path'].isnull().sum()
+        if missing_count > 0:
+            print(f"Warning: Could not find matching files for {missing_count} / {len(df)} tile_ids.")
+            # To see which ones are missing:
+            # print(df[df['file_path'].isnull()]['tile_id'].tolist())
+            df = df.dropna(subset=['file_path'])
+
+        print(f"Successfully mapped {len(df)} tile_ids to their file paths.")
+        return df
