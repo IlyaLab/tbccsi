@@ -171,21 +171,22 @@ def run_preds(sample_id,  # sample ID (string)
                     output_dir=output_dir,
                     batch_size=batch_size
                 ))
+
                 if predictions_df is None:
                     print(f"Skipping prediction saving and plotting for prefix '{prefix}' (predictions_df is None).")
                     continue
 
-                    # Save results
-                predictions_path = output_dir / f"{sample_id}_{prefix}_preds.csv"
-                predictions_df.to_csv(predictions_path, index=False)
-                print(f"Predictions saved to {predictions_path}")
+                else:    # Save results
+                    predictions_path = output_dir / f"{sample_id}_{prefix}_preds.csv"
+                    predictions_df.to_csv(predictions_path, index=False)
+                    print(f"Predictions saved to {predictions_path}")
 
                 # make a heatmap
                 print("Building Heatmap...")
                 try:
-                    heatmap_path = output_dir / f"{sample_id}_{prefix}_heatmap.png"
-                    plotter = WSIPlotter(sample_id, input_slide)
-                    plotter.create_heatmap(predictions_df, heatmap_path, point_size=4, prob_col="prob_class_1")
+                    heatmap_file = f"{sample_id}_{prefix}_heatmap.png"
+                    plotter = WSIPlotter(sample_id, input_slide, output_dir)
+                    plotter.create_heatmap(predictions_df, heatmap_file, point_size=4, prob_col="prob_class_1")
                 except Exception as e:
                     print("heatmap failed..." + str(e))
 

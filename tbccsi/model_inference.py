@@ -193,12 +193,8 @@ class WSIInferenceEngine:
         # Clean up columns: drop redundant x/y coords
         if 'x_coord' in final_df.columns:
             final_df = final_df.drop(columns=['x_coord_orig', 'y_coord_orig'], errors='ignore')
-            final_df = final_df.rename(columns={'x_coord': 'x', 'y_coord': 'y'})
+            #final_df = final_df.rename(columns={'x_coord': 'x', 'y_coord': 'y'})
 
-        predictions_path = Path(output_dir) / f"{self.sample_id}_{self.prefix}_preds.csv"
-        final_df.to_csv(predictions_path, index=False)
-
-        print(f"\nPredictions saved to {predictions_path}")
         return final_df
 
 
