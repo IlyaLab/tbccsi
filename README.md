@@ -31,7 +31,7 @@ tbccsi \
   --sample-id   SH_8_Pre \
   --input-slide "slides/SH-8 Pre/SH-8 Pre.svs" \
   --tile-file   results/SH_8_Pre/SH_8_Pre_common_tiling.csv \
-  --output-dir  results/SH_8_Pre/ \
+  --work-dir  results/SH_8_Pre/ \
   --models      models/mixed_224_c/model_dir \
   --models      models/mixed_224_i/model_dir \
   --models      models/mixed_224_s/model_dir \
@@ -43,14 +43,14 @@ tbccsi \
   --prefixes    macs \
   --prefixes    tcells \
   --batch-size  128 \
-  --save-h-and-e-tiles \
+  --do-inference \
   --save-segmented-tiles
 ```
   
 This call supposes you have a set of models in a 'models' directory, and that each model
 will be labeled (in the output file names) by the appropriate prefix.
 
-## Using the library
+## Using the library (out of date)
 
 ```
 #!/usr/bin/env python

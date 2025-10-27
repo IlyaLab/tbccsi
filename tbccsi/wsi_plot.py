@@ -2,24 +2,27 @@
 import pandas as pd
 import numpy as np
 from pathlib import Path
+import matplotlib
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from PIL import Image, ImageDraw, ImageFont
 from .wsi_tiler import WSITiler
 
+matplotlib.use('Agg')
+
 class WSIPlotter:
     """Handles model loading, inference on tiles, and heatmap generation."""
 
-    def __init__(self, sample=None, slide_path=None, output_dir=None):
+    def __init__(self, sample=None, slide_path=None, output_path=None):
         self.sample = sample
         self.slide = slide_path
-        self.output_dir = output_dir
+        self.output_path = output_path
         if self.slide:
-            self.tiler = WSITiler(sample, slide_path, output_dir)
+            self.tiler = WSITiler(sample, slide_path, output_path)
         else:
             self.tiler=None
 
-    def create_heatmap(self, predictions_df, output_path, file_name, point_size=3, prob_col="prob_class_1"):
+    def create_heatmap(self, predictions_df, file_name, point_size=3, prob_col="prob_class_1"):
         """
         Creates and saves a heatmap visualization of predictions overlaid on the slide.
 
@@ -36,6 +39,8 @@ class WSIPlotter:
         max_dim_ratio = max(slide_dims) / 2000.0
         thumb_size = ( int(slide_dims[0]/max_dim_ratio), int(slide_dims[1]/max_dim_ratio))
         thumbnail = self.tiler.get_thumbnail(thumb_size)
+
+        output_path = self.output_path / file_name
 
         print("Working with thumbnail size: " + str(thumb_size))
         print("  scaling factor: " + str(max_dim_ratio))
@@ -104,7 +109,7 @@ class WSIPlotter:
         plt.tight_layout()
         plt.savefig(output_path, dpi=300, bbox_inches='tight')
         plt.close()
-        print(f"Heatmap saved to {self.output_dir/file_name}")
+        print(f"Heatmap saved to {output_path}")
 
 
     def tile_mean_heatmap(self, tile_file, output_path=None,

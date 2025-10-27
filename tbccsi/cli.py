@@ -19,12 +19,12 @@ def run(
     # Typer uses type hints to define arguments. It's much cleaner!
     sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
     input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
-    output_dir: Path = typer.Option(..., "--output-dir", help="Directory to save the output."),
+    work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
     tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
     models: List[Path] = typer.Option(..., "-m", "--models", help="One or more paths to the trained models."),
     prefixes: List[str] = typer.Option(..., "-p", "--prefixes", help="Column header labels for each model."),
     batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
-    do_inference: bool = typer.Option(False, "--no-inference", help="Run model inference?"),
+    do_inference: bool = typer.Option(False, "--do-inference", help="Run model inference?"),
     use_segmented_tiles: bool = typer.Option(False, "--use-segmented-tiles", help="Use pre-segmented tiles if available."),
     save_segmented_tiles: bool = typer.Option(False, "--save-segmented-tiles", help="If set, save the extracted and segmented tiles to disk."),
     save_h_and_e_tiles: bool = typer.Option(False, "--save-h-and-e-tiles", help="If set, save the extracted H&E tiles to disk.")
@@ -41,7 +41,7 @@ def run(
     tbccsi_.run_preds(
         sample_id=sample_id,
         input_slide=input_slide,
-        output_dir=output_dir,
+        work_dir=work_dir,
         tile_file=tile_file,
         model_list=models,
         prefix_list=prefixes,
