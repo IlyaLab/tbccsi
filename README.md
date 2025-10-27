@@ -14,12 +14,14 @@ Tile based classification on cell segmented images
 * Free software: MIT License
 * Documentation: https://tbccsi.readthedocs.io.
 
-## Features
+## Use cases
 
 * Make H&E tiles and produces the common_tiling file.
-* Can use common tiling files as a template.
-* Cell segmentation with CellPose-SAM. (with tiles in memory or from disk)
-* Cell type predictions using ViT models. (not yet)
+* Make cell segmentation files and the common_tiling file.
+* Use existing common tiling files as a template for cropping.
+* Work with with tiles in batches for a small memory footprint.
+* Cell type predictions using ViT models.
+* Running foundation models on a tile set. (todo)
 * Plots tile prediction heatmaps.
 
 ## Using the CLI for the full pipeline.
