@@ -14,7 +14,6 @@ import re
 # tile based classification on cell segmented images
 from .wsi_tiler import WSITiler
 from .wsi_segmentation import CellSegmentationProcessor
-from .model_inference import WSIInferenceEngine
 from .model_inference import VirchowInferenceEngine
 from .model_inference import ReinhardNormalizer
 from .wsi_plot import WSIPlotter

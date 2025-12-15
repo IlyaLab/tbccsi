@@ -36,7 +36,7 @@ class Virchow2MultiHeadModel(nn.Module):
             nn.Linear(n_features, 512),
             nn.ReLU(),
             nn.Dropout(0.2),
-            nn.Linear(512, 2)
+            nn.Linear(512, 2)  # TUMOR STROMA OR NEITHER
         )
 
         # --- HEAD 2: IMMUNE (Hierarchical Regression) ---
@@ -44,7 +44,7 @@ class Virchow2MultiHeadModel(nn.Module):
         self.immune_shared_latent = nn.Sequential(
             nn.Linear(n_features, 512),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(0.3)
         )
         # Output: [B, 512]
         # 3. T-cell Specific Latent Space (The Key Hierarchical Layer)
@@ -53,12 +53,12 @@ class Virchow2MultiHeadModel(nn.Module):
         self.tcell_specific_latent = nn.Sequential(
             nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(0.05)
         )
         self.mac_specific_latent = nn.Sequential(
             nn.Linear(512, 512),
             nn.ReLU(),
-            nn.Dropout(0.2)
+            nn.Dropout(0.05)
         )
 
         # Parent Output Layer (Predicts Immune, T-cell, Macrophage)
@@ -70,6 +70,7 @@ class Virchow2MultiHeadModel(nn.Module):
         self.immune_output_t_cell = nn.Linear(512, 2)  # CD4, CD8
         # Macrophage children can either use the shared or their own specific latent space.
         self.immune_output_mac = nn.Linear(512, 2)  # M1, M2
+
 
     def forward(self, x):
         # 1. Extract Raw Features (Output shape: [Batch, 261, 1280])
