@@ -148,11 +148,13 @@ class VirchowInferenceEngine:
         with torch.no_grad():
             out_structure, out_immune = self.model(input_batch)
 
-            # Sigmoid lets them be independent.
+            # 1. Apply Sigmoid to BOTH (to get 0-1 probabilities)
             struct_probs = torch.sigmoid(out_structure)
+            immune_probs = torch.sigmoid(out_immune)
 
-            # Post-process Immune
-            immune_vals = out_immune.cpu().numpy()
+            # 2. Convert BOTH to Numpy (Move to CPU once)
+            struct_probs = struct_probs.cpu().numpy()
+            immune_vals = immune_probs.cpu().numpy()
 
         results = []
         for i, original_idx in enumerate(valid_indices):
@@ -180,13 +182,13 @@ class VirchowInferenceEngine:
 
             meta['prob_stroma'] = prob_stroma
             meta['prob_tumor'] = prob_tumor
-            meta['reg_immune_total'] = immune_vals[i, 0]
-            meta['reg_t_cell'] = immune_vals[i, 1]
-            meta['reg_macrophage'] = immune_vals[i, 2]
-            meta['reg_cd4'] = immune_vals[i, 3]
-            meta['reg_cd8'] = immune_vals[i, 4]
-            meta['reg_m1'] = immune_vals[i, 5]
-            meta['reg_m2'] = immune_vals[i, 6]
+            meta['prob_immune'] = immune_vals[i, 0]
+            meta['prob_t_cell'] = immune_vals[i, 1]
+            meta['prob_macrophage'] = immune_vals[i, 2]
+            meta['prob_cd4'] = immune_vals[i, 3]
+            meta['prob_cd8'] = immune_vals[i, 4]
+            meta['prob_m1'] = immune_vals[i, 5]
+            meta['prob_m2'] = immune_vals[i, 6]
 
             results.append(meta)
 
