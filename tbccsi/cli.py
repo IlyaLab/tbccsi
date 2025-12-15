@@ -9,7 +9,7 @@ from . import tbccsi_main as tbccsi_
 
 # 1. Create the Typer "app" object that pyproject.toml is looking for
 app = typer.Typer(
-    help="A CLI for tile-based classification on cell-segmented images.",
+    help="A CLI for tile-based classification.",
     add_completion=False
 )
 
@@ -21,35 +21,26 @@ def run(
     input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
     work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
     tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
-    models: List[Path] = typer.Option(..., "-m", "--models", help="One or more paths to the trained models."),
-    prefixes: List[str] = typer.Option(..., "-p", "--prefixes", help="Column header labels for each model."),
+    model_path: Path = typer.Option(..., "-m", "--model-path", help="One or more paths to the trained models."),
     batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
     do_inference: bool = typer.Option(False, "--do-inference", help="Run model inference?"),
-    use_segmented_tiles: bool = typer.Option(False, "--use-segmented-tiles", help="Use pre-segmented tiles if available."),
-    save_segmented_tiles: bool = typer.Option(False, "--save-segmented-tiles", help="If set, save the extracted and segmented tiles to disk."),
-    save_h_and_e_tiles: bool = typer.Option(False, "--save-h-and-e-tiles", help="If set, save the extracted H&E tiles to disk.")
+    do_plot: str = typer.Option("None", "--do-plot", help="Select column name to plot.")
 ):
     """
     Run the WSI prediction pipeline.
     """
-    if len(models) != len(prefixes):
-        # Typer has nicer error handling
-        raise typer.BadParameter("The number of --models must equal the number of --prefixes.")
 
     # 3. The rest of your logic stays the same
     typer.echo(f"Running inference for sample: {sample_id}")
-    tbccsi_.run_preds(
+    tbccsi_.run_virchow_pred(
         sample_id=sample_id,
         input_slide=input_slide,
         work_dir=work_dir,
         tile_file=tile_file,
-        model_list=models,
-        prefix_list=prefixes,
+        model_path=model_path,
         batch_size=batch_size,
         do_inference=do_inference,
-        use_segmented=use_segmented_tiles,
-        save_segmented_tiles=save_segmented_tiles,
-        save_h_and_e_tiles=save_h_and_e_tiles
+        do_plot=do_plot
     )
     typer.echo("✅ Pipeline finished successfully.")
 

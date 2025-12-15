@@ -22,7 +22,7 @@ class WSIPlotter:
         else:
             self.tiler=None
 
-    def create_heatmap(self, predictions_df, file_name, point_size=3, prob_col="prob_class_1"):
+    def create_heatmap(self, predictions_df, file_name, point_size=3, prob_col="prob_struct_0"):
         """
         Creates and saves a heatmap visualization of predictions overlaid on the slide.
 
@@ -46,7 +46,7 @@ class WSIPlotter:
         print("  scaling factor: " + str(max_dim_ratio))
 
         # Create a figure with three subplots
-        fig, axes = plt.subplots(1, 3, figsize=(18, 6), dpi=150)
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6), dpi=150)
 
         # 1. Original thumbnail
         axes[0].imshow(thumbnail)
@@ -57,8 +57,8 @@ class WSIPlotter:
             # Calculate scaling factors to map tile coordinates to thumbnail coordinates
 
             # Scale coordinates
-            x_scaled = (predictions_df['x_coord'] / max_dim_ratio)
-            y_scaled = (predictions_df['y_coord'] / max_dim_ratio)
+            x_scaled = (predictions_df['x'] / max_dim_ratio)
+            y_scaled = (predictions_df['y'] / max_dim_ratio)
 
             # 2. Prediction heatmap (colored by probability of class 1)
             scatter1 = axes[1].scatter(
@@ -81,22 +81,22 @@ class WSIPlotter:
 
 
             # 3. Confidence heatmap
-            scatter2 = axes[2].scatter(
-                x_scaled, y_scaled,
-                c=predictions_df['confidence'],
-                cmap='viridis',  # Viridis is good for showing magnitude
-                marker='s',
-                s=point_size,
-                alpha=0.7
-            )
+            #scatter2 = axes[2].scatter(
+            #    x_scaled, y_scaled,
+            #    c=predictions_df['confidence'],
+            #    cmap='viridis',  # Viridis is good for showing magnitude
+            #    marker='s',
+            #    s=point_size,
+            #    alpha=0.7
+            #)
             # axes[2].imshow(thumbnail, alpha=0.3)
 
-            axes[2].set_aspect('equal', adjustable='box')
-            axes[2].set_xlim(0, thumb_size[0])
-            axes[2].set_ylim(thumb_size[1], 0)
-            axes[2].set_title(f'Confidence Heatmap {self.sample}')
-            axes[2].axis('off')
-            plt.colorbar(scatter2, ax=axes[2], fraction=0.046, pad=0.04)
+            #axes[2].set_aspect('equal', adjustable='box')
+            #axes[2].set_xlim(0, thumb_size[0])
+            #axes[2].set_ylim(thumb_size[1], 0)
+            #axes[2].set_title(f'Confidence Heatmap {self.sample}')
+            #axes[2].axis('off')
+            #plt.colorbar(scatter2, ax=axes[2], fraction=0.046, pad=0.04)
         else:
             # Handle case with no predictions
             for i in range(1, 3):
