@@ -1,6 +1,6 @@
 [project]
 name = "tbccsi"
-version = "0.2.2"
+version = "0.2.3"
 description = "Tile based classification on cell segmented images"
 readme = "README.md"
 authors = [

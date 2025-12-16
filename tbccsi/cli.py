@@ -24,6 +24,7 @@ def run(
     model_path: Path = typer.Option(..., "-m", "--model-path", help="One or more paths to the trained models."),
     batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
     do_inference: bool = typer.Option(False, "--do-inference", help="Run model inference?"),
+    do_tta: bool = typer.Option(False, "--do-tta", help="Run test-time augmentation?"),
     do_plot: str = typer.Option("None", "--do-plot", help="Select column name to plot.")
 ):
     """
@@ -40,6 +41,7 @@ def run(
         model_path=model_path,
         batch_size=batch_size,
         do_inference=do_inference,
+        do_tta=do_tta,
         do_plot=do_plot
     )
     typer.echo("✅ Pipeline finished successfully.")
