@@ -1,57 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "tbccsi"
-version = "0.2.3"
-description = "Tile based classification on cell segmented images"
+version = "0.2.2"
+description = "TBCCSI project with multihead models"
 readme = "README.md"
-authors = [
-  {name = "David L Gibbs", email = "david.gibbs@isbscience.org"}
-]
-maintainers = [
-  {name = "David L Gibbs", email = "david.gibbs@isbscience.org"}
-]
-classifiers = [
-    # TODO
-]
-license = {text = "MIT"}
-dependencies = [
-  "typer"
-]
-requires-python = ">= 3.10"
+requires-python = ">=3.10"
 
-[project.optional-dependencies]
-test = [
-    "coverage",  # testing
-    "pytest",  # testing
-    "ruff",  # linting
-    "ty", # checking types
-    "ipdb", # debugging
+# FIX 1: License is now a simple string (SPDX identifier) to fix the deprecation warning
+license = "MIT"
+
+authors = [
+  { name = "IlyaLab", email = "your.email@example.com" },
+]
+
+# Add your project dependencies here
+dependencies = [
+    "torch",
+    "numpy",
+    "pandas",
+    # Add other libs you use, e.g. "h5py", "timm", etc.
 ]
 
 [project.urls]
-bugs = "https://github.com/gibbsdavidl/tbccsi/issues"
-changelog = "https://github.com/gibbsdavidl/tbccsi/blob/master/changelog.md"
-homepage = "https://github.com/gibbsdavidl/tbccsi"
+Repository = "https://github.com/IlyaLab/tbccsi"
 
-[project.scripts]
-tbccsi = "tbccsi.cli:app"
-
-[tool.ty]
-# All rules are enabled as "error" by default; no need to specify unless overriding.
-# Example override: relax a rule for the entire project (uncomment if needed).
-# rules.TY015 = "warn"  # For invalid-argument-type, warn instead of error.
-
-[tool.ruff]
-line-length = 120
-
-[tool.ruff.lint]
-select = [
-    "E",   # pycodestyle errors
-    "W",   # pycodestyle warnings
-    "F",   # Pyflakes
-    "I",   # isort
-    "B",   # flake8-bugbear
-    "UP",  # pyupgrade
-]
-
-[tool.uv]
-package = true
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["tbccsi*"]  # We only need to find the main package now
+namespaces = false

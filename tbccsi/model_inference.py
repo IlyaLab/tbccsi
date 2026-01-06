@@ -1,16 +1,16 @@
 import torch
-import pandas as pd
 import numpy as np
 import cv2
 from pathlib import Path
-from tqdm import tqdm
 from PIL import Image, ImageFile
 import timm
 from timm.data import resolve_data_config
 from timm.data.transforms_factory import create_transform
 from timm.layers import SwiGLUPacked
 from safetensors.torch import load_file
-from .model_virchow2 import Virchow2MultiHeadModel
+
+## our model ##
+from .models.virchow2_hybrid import Virchow2MultiHeadModel
 
 # Ensure truncated images don't crash PIL
 ImageFile.LOAD_TRUNCATED_IMAGES = True
