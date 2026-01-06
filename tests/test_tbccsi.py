@@ -54,8 +54,8 @@ def test_segmentation():
 
 # do inference on segmented tiles
 def test_inference():
-    from tbccsi.model_inference import WSIInferenceEngine
-    model = WSIInferenceEngine('/users/dgibbs/Work/CSBC/inference_test/models/mixed_224_c/model_dir')
+    from tbccsi.model_inference import VirchowInferenceEngine
+    model = VirchowInferenceEngine('/home/daveg/Work/CSBC/multihead_workflow/model_weights/checkpoint-14000/model.safetensors')
     model.sample_id = "TestID"
     model.prefix = "cancer"
     output_dir = Path('/users/dgibbs/tmp/tbccsi_tests')

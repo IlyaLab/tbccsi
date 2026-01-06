@@ -1,4 +1,3 @@
-from .vit_model_5_7 import VitClassification
 import torch
 import pandas as pd
 import numpy as np
@@ -21,16 +20,19 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 class ReinhardNormalizer:
     """
     Normalizes H&E images to a target color distribution in LAB space.
+    Used in  data processing for the wash out:
+    TARGET_MEANS = [147.92, 141.08, 122.12]
+    TARGET_STDS = [53.17,  4.72,  5.23]
     """
 
     def __init__(self, target_means=None, target_stds=None):
         if target_means is None:
-            self.target_means = np.array([148.60, 169.30, 105.97], dtype=np.float32)
+            self.target_means = np.array([147.92, 141.08, 122.12], dtype=np.float32)
         else:
             self.target_means = np.array(target_means, dtype=np.float32)
 
         if target_stds is None:
-            self.target_stds = np.array([41.56, 9.01, 6.67], dtype=np.float32)
+            self.target_stds = np.array([53.17,  4.72,  5.23], dtype=np.float32)
         else:
             self.target_stds = np.array(target_stds, dtype=np.float32)
 
