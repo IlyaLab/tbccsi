@@ -21,6 +21,12 @@ dependencies = [
     "torch",
     "numpy",
     "pandas",
+    "Pillow",
+    "typer",
+    "tqdm",
+    "cv2",
+    "timm",
+    "matplotlib"
     # Add other libs you use, e.g. "h5py", "timm", etc.
 ]
 

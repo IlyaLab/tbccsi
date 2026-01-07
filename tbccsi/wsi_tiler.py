@@ -8,6 +8,82 @@ import openslide
 from openslide import OpenSlide
 from openslide.lowlevel import OpenSlideUnsupportedFormatError
 import tifffile
+import slideio
+
+
+class VSISlide:
+    """
+    A wrapper for SlideIO to make .vsi files behave like OpenSlide objects.
+    """
+    def __init__(self, file_path):
+        # Open the slide using the VSI driver
+        self.slide = slideio.open_slide(file_path, "VSI")
+        # .vsi files can have multiple scenes; usually the main image is scene 0
+        self.scene = self.slide.get_scene(0)
+
+        # OpenSlide expects level_dimensions[0] to be (width, height)
+        self.width = self.scene.rect[2]
+        self.height = self.scene.rect[3]
+        self.dimensions = (self.width, self.height)
+
+        # Simulate levels (SlideIO handles scaling dynamically, but we define standard powers of 2)
+        # You can adjust this range if you need deeper pyramids
+        self.level_count = 10
+        self.level_downsamples = tuple(2 ** i for i in range(self.level_count))
+        self.level_dimensions = tuple(
+            (int(self.width / d), int(self.height / d))
+            for d in self.level_downsamples
+        )
+
+        # Attempt to read magnification/MPP metadata
+        # SlideIO usually provides resolution in meters. We convert to microns (MPP).
+        try:
+            res_x = self.scene.resolution[0]
+            if res_x > 0:
+                mpp = 1.0 / (res_x * 1000000)  # Convert pixels/meter to microns/pixel
+                # OR if slideio returns meters/pixel directly (version dependent), just * 1e6
+                # Standard Safe check: if value is tiny (e.g. 2e-7), it's meters.
+                if res_x < 0.001:
+                    mpp = res_x * 1e6
+
+                self.properties = {
+                    'openslide.mpp-x': mpp,
+                    'openslide.mpp-y': mpp,
+                    'openslide.objective-power': 'N/A'  # VSI objective hard to parse generically
+                }
+            else:
+                self.properties = {}
+        except:
+            self.properties = {}
+
+    def read_region(self, location, level, size):
+        """
+        Mimic openslide.read_region
+        location: (x, y) tuple at level 0
+        level: integer level
+        size: (width, height) tuple of output tile
+        """
+        x, y = location
+        w, h = size
+
+        # Calculate the size of the region in Level 0 coordinates
+        scale = self.level_downsamples[level]
+        src_w = int(w * scale)
+        src_h = int(h * scale)
+
+        # SlideIO read_block args: rect=(x, y, w, h), size=(out_w, out_h)
+        # Note: 'rect' is in the source resolution (Level 0)
+        tile_arr = self.scene.read_block(
+            rect=(x, y, src_w, src_h),
+            size=(w, h)
+        )
+
+        # Convert numpy array (SlideIO) to PIL Image (OpenSlide standard)
+        return Image.fromarray(tile_arr)
+
+    def close(self):
+        # SlideIO handles closing automatically, but we keep interface compatibility
+        pass
 
 
 class WSITiler:
@@ -28,65 +104,75 @@ class WSITiler:
         # make sure the output path exists
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
 
-        ### open the file, be it SVS or TIFF ###
-        try:
-            # --- Try OpenSlide First ---
-            self._slide = OpenSlide(self.slide_path)
-            self._backend = 'openslide'
+
+        if str(self.slide_path).lower().endswith('.vsi'):
+            print(f"INFO: Detected .vsi file. Using SlideIO wrapper for {self.slide_path}")
+            self._slide = VSISlide(str(self.slide_path))
+            self._backend = 'vsi'
             self.level_dimensions = self._slide.level_dimensions
-            print(f"INFO: Successfully opened {self.slide_path} with OpenSlide.")
-        except OpenSlideUnsupportedFormatError:
-            print(f"INFO: OpenSlide failed. Falling back to Tifffile for {self.slide_path}...")
+        else:
+            ### open the file, be it SVS or TIFF ###
             try:
-                # --- Fallback to Tifffile ---
-                # Open the file handle, but don't read the image data yet
-                tiff = tifffile.TiffFile(self.slide_path)
-                self._backend = 'tifffile'
-                # Check if the TIFF is a pyramidal OME-TIFF
-                # A pyramidal series will exist and have the is_pyramidal flag set to True.
-                if tiff.series and tiff.series[0].is_pyramidal:
-                    # --- Handle Pyramidal TIFF ---
-                    print("INFO: Detected pyramidal TIFF structure.")
-                    pyramid = tiff.series[0]
-                    self.level_dimensions = [(level.shape[1], level.shape[0]) for level in pyramid.levels]
-                    # Ensure the requested level is valid before reading
-                    if self.level >= len(pyramid.levels):
-                        raise IndexError(
-                            f"Requested level {self.level} is out of bounds for pyramid with {len(pyramid.levels)} levels.")
-                    # Read the specified level into memory
-                    self._slide = pyramid.levels[self.level].asarray()
-                else:
-                    # --- Handle Flat TIFF (Color or Grayscale) ---
-                    print("INFO: Detected flat TIFF structure.")
-                    # Use tiff.asarray() to correctly assemble all pages/channels into a single NumPy array.
-                    # This is the key change to handle color images where channels are on separate pages.
-                    img_array = tiff.asarray()
-                    if img_array.ndim == 3 and img_array.shape[0] in [3, 4]:
-                        print(f"INFO: Transposing array from {img_array.shape} (C,H,W) to (H,W,C).")
-                        img_array = np.moveaxis(img_array, 0, -1)
-                    # Ensure the image has a supported shape (2D for grayscale, 3D for color)
-                    if img_array.ndim not in [2, 3]:
-                        raise ValueError(
-                            f"Unsupported image dimensionality. Expected 2 or 3 dimensions, but got {img_array.ndim}.")
-                    # Get spatial dimensions (height, width) from the first two axes of the array
-                    h, w = img_array.shape[0], img_array.shape[1]  # index 0 is the three color channels
-                    self.level_dimensions = [(w, h)]
-                    if self.level != 0:
-                        print(
-                            f"WARNING: Requested level {self.level}, but this is a flat TIFF. Loading level 0 instead.")
-                    # Assign the complete array (which will be HxW for grayscale or HxWxC for color)
-                    self._slide = img_array
-                # Close the file handle now that the image data is in the NumPy array
-                tiff.close()
-                print(f"INFO: Successfully opened {self.slide_path} with Tifffile.")
+                # --- Try OpenSlide First ---
+                self._slide = OpenSlide(self.slide_path)
+                self._backend = 'openslide'
+                self.level_dimensions = self._slide.level_dimensions
+                print(f"INFO: Successfully opened {self.slide_path} with OpenSlide.")
+            except OpenSlideUnsupportedFormatError:
+                print(f"INFO: OpenSlide failed. Falling back to Tifffile for {self.slide_path}...")
+                try:
+                    # --- Fallback to Tifffile ---
+                    # Open the file handle, but don't read the image data yet
+                    tiff = tifffile.TiffFile(self.slide_path)
+                    self._backend = 'tifffile'
+                    # Check if the TIFF is a pyramidal OME-TIFF
+                    # A pyramidal series will exist and have the is_pyramidal flag set to True.
+                    if tiff.series and tiff.series[0].is_pyramidal:
+                        # --- Handle Pyramidal TIFF ---
+                        print("INFO: Detected pyramidal TIFF structure.")
+                        pyramid = tiff.series[0]
+                        self.level_dimensions = [(level.shape[1], level.shape[0]) for level in pyramid.levels]
+                        # Ensure the requested level is valid before reading
+                        if self.level >= len(pyramid.levels):
+                            raise IndexError(
+                                f"Requested level {self.level} is out of bounds for pyramid with {len(pyramid.levels)} levels.")
+                        # Read the specified level into memory
+                        self._slide = pyramid.levels[self.level].asarray()
+                    else:
+                        # --- Handle Flat TIFF (Color or Grayscale) ---
+                        print("INFO: Detected flat TIFF structure.")
+                        # Use tiff.asarray() to correctly assemble all pages/channels into a single NumPy array.
+                        # This is the key change to handle color images where channels are on separate pages.
+                        img_array = tiff.asarray()
+                        if img_array.ndim == 3 and img_array.shape[0] in [3, 4]:
+                            print(f"INFO: Transposing array from {img_array.shape} (C,H,W) to (H,W,C).")
+                            img_array = np.moveaxis(img_array, 0, -1)
+                        # Ensure the image has a supported shape (2D for grayscale, 3D for color)
+                        if img_array.ndim not in [2, 3]:
+                            raise ValueError(
+                                f"Unsupported image dimensionality. Expected 2 or 3 dimensions, but got {img_array.ndim}.")
+                        # Get spatial dimensions (height, width) from the first two axes of the array
+                        h, w = img_array.shape[0], img_array.shape[1]  # index 0 is the three color channels
+                        self.level_dimensions = [(w, h)]
+                        if self.level != 0:
+                            print(
+                                f"WARNING: Requested level {self.level}, but this is a flat TIFF. Loading level 0 instead.")
+                        # Assign the complete array (which will be HxW for grayscale or HxWxC for color)
+                        self._slide = img_array
+                    # Close the file handle now that the image data is in the NumPy array
+                    tiff.close()
+                    print(f"INFO: Successfully opened {self.slide_path} with Tifffile.")
+                except Exception as e:
+                    raise IOError(f"Failed to open {self.slide_path} with both OpenSlide and Tifffile.") from e
             except Exception as e:
-                raise IOError(f"Failed to open {self.slide_path} with both OpenSlide and Tifffile.") from e
-        except Exception as e:
-            # Catch other potential errors from OpenSlide
-            raise IOError(f"An unexpected error occurred while opening {self.slide_path} with OpenSlide.") from e
+                # Catch other potential errors from OpenSlide
+                raise IOError(f"An unexpected error occurred while opening {self.slide_path} with OpenSlide.") from e
 
     def get_shape(self, level):
-        if openslide and isinstance(self._slide, OpenSlide):
+        # --- NEW: Handle VSISlide ---
+        if isinstance(self._slide, VSISlide):
+            return self._slide.level_dimensions[level]
+        elif openslide and isinstance(self._slide, OpenSlide):
             # Handle OpenSlide object
             slide_dims = self._slide.level_dimensions[level]
             return(slide_dims)
@@ -107,7 +193,24 @@ class WSITiler:
         if len(thumb_size) != 2:
             print("Thumb_size needs to be specified as a tuple (x,y)")
             exit()
-        if openslide and isinstance(self._slide, OpenSlide):
+        # --- NEW: Handle VSISlide ---
+        if isinstance(self._slide, VSISlide):
+            print("Processing slide as VSISlide object.")
+            # Find the best level (smallest level larger than thumb_size)
+            target_w, target_h = thumb_size
+            best_level = 0
+            for i, (w, h) in enumerate(self._slide.level_dimensions):
+                if w < target_w or h < target_h:
+                    break
+                best_level = i
+
+            # Read the whole region of that level
+            # VSISlide.read_region expects coordinates in Level 0 (x=0, y=0)
+            # and the target size of the output level
+            lvl_w, lvl_h = self._slide.level_dimensions[best_level]
+            thumbnail = self._slide.read_region((0, 0), best_level, (lvl_w, lvl_h))
+            thumbnail.thumbnail(thumb_size, Image.Resampling.LANCZOS)
+        elif openslide and isinstance(self._slide, OpenSlide):
             # Handle OpenSlide object
             thumbnail = self._slide.get_thumbnail(thumb_size)
             print("Processing slide as OpenSlide object.")
@@ -156,10 +259,11 @@ class WSITiler:
         x, y = location
         w, h = size
 
-        if self._backend == 'openslide':
-            # OpenSlide returns a PIL image, so we convert it to a NumPy array
+        # --- UPDATED: Allow 'vsi' backend here ---
+        if self._backend == 'openslide' or self._backend == 'vsi':
+            # OpenSlide (and our VSISlide wrapper) return a PIL image
             pil_image = self._slide.read_region(location, level, size)
-            return pil_image#  )[:, :, :3]  # Drop alpha channel if present (RGBA -> RGB)
+            return pil_image
 
         elif self._backend == 'tifffile':
             # 2. Call asarray on the PAGE object, not the FILE object

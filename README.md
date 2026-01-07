@@ -1,124 +1,131 @@
-# tbccsi
+# tbccsi: Tile based classification on cell segmented images
 
-[//]: # ![PyPI version](https://img.shields.io/pypi/v/tbccsi.svg)
+**tbccsi** is a Python-based tool for processing Whole Slide Images (WSI) in pathology. It handles the tiling of massive slide files (including SVS, TIFF, and VSI formats) and runs inference models to generate predictions.
 
-[//]: # [![Documentation Status](https://readthedocs.org/projects/tbccsi/badge/?version=latest)]
+## Features
 
-[//]: # (https://tbccsi.readthedocs.io/en/latest/?version=latest)
+* **Multi-format Support:** Natively reads `.svs` (OpenSlide), `.tiff` (TiffFile), and `.vsi` (SlideIO).
+* **Smart Tiling:** Automatically detects tissue regions to avoid processing empty background tiles.
+* **CLI Interface:** Easy-to-use command line interface built with **Typer**.
+* **Efficient:** Supports high-performance reading and optional on-the-fly extraction.
 
-Tile based classification on cell segmented images
+## Installation
 
-* ~~PyPI package: https://pypi.org/project/tbccsi/~~
-* git clone https://github.com/IlyaLab/tbccsi
-* pip install -e tbccsi
-* Free software: MIT License
-* Documentation: https://tbccsi.readthedocs.io.
+### 1. System Dependencies
+You must install the OpenSlide C library before installing the Python bindings.
 
-## Use cases
-
-* Make H&E tiles and produces the common_tiling file.
-* Make cell segmentation files and the common_tiling file.
-* Use existing common tiling files as a template for cropping.
-* Work with with tiles in batches for a small memory footprint.
-* Cell type predictions using ViT models.
-* Running foundation models on a tile set. (todo)
-* Plots tile prediction heatmaps.
-
-## Using the CLI for the full pipeline.
-
-```
-tbccsi run \
-  --sample-id   SH_8_Pre \
-  --input-slide "slides/SH-8 Pre/SH-8 Pre.svs" \
-  --tile-file   results/SH_8_Pre/SH_8_Pre_common_tiling.csv \
-  --work-dir    results/SH_8_Pre/ \
-  --model       results/model_dir \
-  --batch-size  128 \
-  --do-inference \
-  --do-plotting 
-
-```
-  
-This call supposes you have a set of models in a 'models' directory, and that each model
-will be labeled (in the output file names) by the appropriate prefix.
-
-## Using the library (out of date)
-
-```
-#!/usr/bin/env python
-
-from pathlib import Path
-from tbccsi.wsi_tiler import WSITiler
-from tbccsi.wsi_segmentation import CellSegmentationProcessor as CSP
-from tbccsi.model_inference import WSIInferenceEngine
-
-sample_id = 'my_id'
-
-output_dir = Path('/path_to_saving_the_outputs/')
-
-tile_file = 'name_for_common_tiling_file.csv'
-
-slide_dir = Path('where_the_slides_are')
-
-slide_name = "slide_name.svs"
-
-model_dir = Path('/models/')
-
-models = ['mixed_224_c/model_dir','mixed_224_i/model_dir', 'mixed_224_s/model_dir', 'mixed_imm_m_224/model_dir','mixed_imm_t_224/model_dir']
-
-prefixes = ['cancer', 'immune', 'stroma', 'macs', 'tcells']
-
-# H&E tiling
-tiler = WSITiler(sample_id,
-                 slide_dir/slide_name,
-                 output_dir)
-tiles = tiler.extract_tiles(tile_file=None, output_dir=output_dir, save_tiles=False)
-
-print(str(len(tiles)) + " number of tiles extracted.")
-
-# segmentation
-segs = CSP(batch_size=128)
-masks = segs.segment_and_mask_tiles(tiles=tiles,
-                                    save_masks=True,
-                                    mask_output_dir=output_dir/"segmented_tiles")
-
-# model inference
-for i in range(5):
-    # do inference on segmented tiles
-    model = WSIInferenceEngine(model_dir/models[i])
-    model.sample_id = sample_id
-    model.prefix = prefixes[i]
-    results = model.load_and_predict_tiles(output_dir=output_dir,
-                                           tile_file_path=output_dir/tile_file,
-                                           tile_input_dir=output_dir/"segmented_tiles",
-                                           batch_size=256)
-
+* **Ubuntu/Debian:**
+  ```bash
+  sudo apt-get install openslide-tools
 
 ```
 
-## Plotting heatmaps
+* **macOS (Homebrew):**
+```bash
+brew install openslide
 
 ```
-#!/usr/bin/env python
 
-from pathlib import Path
-import pandas as pd
-from tbccsi.wsi_plot import WSIPlotter
 
-result_dir = Path('/results/')
+* **Windows:**
+Download binaries from [openslide.org](https://openslide.org/download/).
 
-slide_dir = Path('/slides/')
+### 2. Python Dependencies
 
-plotter = WSIPlotter(sample="sample_name",
-                     slide=slide_dir/"slide_file_name.svs",
-                     output_dir=result_dir)
+Clone the repository and install the requirements.
 
-predictions_df = pd.read_csv(result_dir/'predictions.csv')
+```bash
+git clone [https://github.com/IlyaLab/tbccsi.git](https://github.com/IlyaLab/tbccsi.git)
+cd tbccsi
+pip install -r requirements.txt
+pip install .  # Install the package to register the 'tbccsi' command
 
-plotter.tile_heatmap("my_heatmap.pdf", predictions_df, point_size=3, prob_col="prob_class_1")
-
-print("all done!")
 ```
 
-## Credits
-David L Gibbs
+*Ensure your `requirements.txt` includes:* `slideio`, `openslide-python`, `tifffile`, `typer`, `pandas`, `numpy`, `Pillow`, `tqdm`.
+
+## Usage
+
+The tool is run via the command line using the `tbccsi` command with two main subcommands: `tile` and `pred`.
+
+### 1. Tiling (`tile`)
+
+The `tile` command scans a whole slide image, detects tissue regions, and generates a coordinate CSV file. It can optionally save the actual image tiles to disk.
+
+**Basic Usage (Generate Coordinates Only):**
+
+```bash
+tbccsi tile --slide-path "/path/to/slide.vsi" --output-dir "./output" --sample-id "Sample_001"
+
+```
+
+**Save Extracted Tile Images:**
+Add the `--save-tiles` flag to write `.png` files to disk.
+
+```bash
+tbccsi tile --slide-path "/path/to/slide.svs" --output-dir "./output" --sample-id "Sample_001" --save-tiles
+
+```
+
+**Arguments:**
+
+* `--slide-path`: Path to the input WSI file (`.svs`, `.vsi`, `.tiff`).
+* `--output-dir`: Directory where results (CSV and/or tiles) will be saved.
+* `--sample-id`: Unique identifier for the sample (used in filenames).
+* `--tile-size`: (Optional) Size of tiles in pixels (default: 224).
+* `--save-tiles / --no-save-tiles`: Whether to save actual images to disk (default: `False`).
+
+---
+
+### 2. Prediction (`pred`)
+
+The `pred` command runs inference on the generated tiles.
+
+**Usage:**
+
+```bash
+tbccsi pred --tile-file "./output/Sample_001_common_tiling.csv" --model-path "./models/my_model.pth" --output-file "./results.csv"
+
+```
+
+**Arguments:**
+
+* `--tile-file`: Path to the CSV file generated by the `tile` command.
+* `--model-path`: Path to the trained model file.
+* `--output-file`: Path to save prediction results.
+
+## Supported Formats
+
+| Extension | Backend | Notes |
+| --- | --- | --- |
+| **.svs** | OpenSlide | Standard Aperio format. |
+| **.tiff / .tif** | TiffFile | Supports OME-TIFF and flat TIFFs. |
+| **.vsi** | SlideIO | **New:** Olympus CellSens format. Requires `slideio`. |
+
+## Project Structure
+
+```
+tbccsi/
+├── main.py          # Entry point for the Typer CLI
+├── wsi_tiler.py     # Core tiling logic (WSITiler, VSISlide)
+├── inference.py     # Prediction logic
+├── requirements.txt # Python dependencies
+├── pyproject.toml   # Project configuration
+└── README.md
+
+```
+
+## Troubleshooting
+
+**Error: `OpenSlideUnsupportedFormatError**`
+
+* Ensure the file is not corrupted.
+* If using `.vsi`, ensure `slideio` is installed properly, as OpenSlide does not support VSI.
+
+**Error: `DllNotFoundException` (Windows)**
+
+* Ensure the OpenSlide `bin` directory is added to your system `PATH`.
+
+```
+
+```
