@@ -6,6 +6,7 @@ import typer
 
 # Note the relative import '.' for a module in the same package
 from . import tbccsi_main as tbccsi_
+from .wsi_tiler import WSITiler
 
 # 1. Create the Typer "app" object that pyproject.toml is looking for
 app = typer.Typer(
@@ -15,7 +16,7 @@ app = typer.Typer(
 
 # 2. Use the @app.command() decorator instead of a main() function
 @app.command()
-def run(
+def pred(
     # Typer uses type hints to define arguments. It's much cleaner!
     sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
     input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
@@ -45,6 +46,30 @@ def run(
         do_plot=do_plot
     )
     typer.echo("✅ Pipeline finished successfully.")
+
+
+
+@app.command()
+def tile(
+    sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
+    input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
+    work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
+    tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
+    save_tiles: bool = typer.Option(False, "--save-tiles", help="Save tiles to disk?")
+):
+    """
+    Generate the tile coordinate file.
+    """
+    output_dir = work_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tile_file_path = output_dir / tile_file
+
+    typer.echo(f"Generating tiling for sample: {sample_id}")
+
+    tiler = WSITiler(sample_id, input_slide, output_dir, tile_file_path)
+    tiler.create_tile_file(save_tiles=save_tiles)
+
+    typer.echo("✅ Tiling finished successfully.")
 
 
 # This part is only for making the script runnable with "python cli.py"

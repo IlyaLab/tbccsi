@@ -10,7 +10,7 @@ from timm.layers import SwiGLUPacked
 from safetensors.torch import load_file
 
 ## our model ##
-from .models.virchow2_hybrid import Virchow2MultiHeadModel
+from .models.model_virchow2_v2 import Virchow2MultiHeadModel
 
 # Ensure truncated images don't crash PIL
 ImageFile.LOAD_TRUNCATED_IMAGES = True

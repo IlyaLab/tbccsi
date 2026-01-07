@@ -27,7 +27,7 @@ Tile based classification on cell segmented images
 ## Using the CLI for the full pipeline.
 
 ```
-tbccsi \
+tbccsi run \
   --sample-id   SH_8_Pre \
   --input-slide "slides/SH-8 Pre/SH-8 Pre.svs" \
   --tile-file   results/SH_8_Pre/SH_8_Pre_common_tiling.csv \
