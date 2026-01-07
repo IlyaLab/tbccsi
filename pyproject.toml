@@ -24,7 +24,7 @@ dependencies = [
     "Pillow",
     "typer",
     "tqdm",
-    "cv2",
+    "opencv-python-headless",
     "timm",
     "matplotlib"
     # Add other libs you use, e.g. "h5py", "timm", etc.
