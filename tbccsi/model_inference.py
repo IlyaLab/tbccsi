@@ -1,4 +1,5 @@
 import torch
+import pandas as pd
 import numpy as np
 import cv2
 from pathlib import Path
@@ -207,3 +208,116 @@ class VirchowInferenceEngine:
                 continue
 
         return results
+
+
+    def apply_hierarchical_thresholds(self, predictions_df, thresholds_csv):
+        """
+        Applies strict hierarchical thresholding to prediction probabilities.
+
+        1. Defines Structural Context (Tumor/Stroma/Ambiguous) based on global thresholds.
+        2. Applies context-specific thresholds for immune cells.
+        3. Resolves final identity (Leaf > Parent > Root).
+        """
+        print("Loading thresholds and applying hierarchical logic...")
+
+        # 1. Load Thresholds
+        thresh_df = pd.read_csv(thresholds_csv)
+
+        # Helper to get a specific threshold value
+        def get_thresh(cell, context):
+            val = thresh_df.loc[(thresh_df['cell'] == cell) & (thresh_df['context'] == context), 'threshold']
+            return val.values[0] if len(val) > 0 else 0.99  # Safe fallback
+
+        # ---------------------------------------------------------
+        # STEP 1: DEFINE STRUCTURAL CONTEXT
+        # ---------------------------------------------------------
+        # Get global thresholds for structure
+        t_thresh = get_thresh('n_tumor', 'Global')
+        s_thresh = get_thresh('n_stroma', 'Global')
+
+        # Create Masks
+        # Must exceed threshold AND be the dominant structural signal
+        is_tumor = (predictions_df['PredProb_n_tumor'] > t_thresh) & \
+                   (predictions_df['PredProb_n_tumor'] > predictions_df['PredProb_n_stroma'])
+
+        is_stroma = (predictions_df['PredProb_n_stroma'] > s_thresh) & \
+                    (predictions_df['PredProb_n_stroma'] > predictions_df['PredProb_n_tumor'])
+
+        # Everything else is Ambiguous
+        # (This includes low-confidence predictions or where tumor ~= stroma)
+        predictions_df['structural_context'] = 'Ambiguous_Region'
+        predictions_df.loc[is_tumor, 'structural_context'] = 'Tumor_Region'
+        predictions_df.loc[is_stroma, 'structural_context'] = 'Stroma_Region'
+
+        print(f"Contexts assigned: {predictions_df['structural_context'].value_counts().to_dict()}")
+
+        # ---------------------------------------------------------
+        # STEP 2: APPLY CONTEXT-SPECIFIC THRESHOLDS
+        # ---------------------------------------------------------
+        # We will store boolean 'Pass' columns for every cell type
+        immune_nodes = [c for c in thresh_df['cell'].unique() if c not in ['n_tumor', 'n_stroma']]
+
+        for cell in immune_nodes:
+            col_name = f'Is_{cell}'
+            prob_col = f'PredProb_{cell}'
+            predictions_df[col_name] = False  # Initialize as False
+
+            # Apply for each context separately
+            for context in ['Tumor_Region', 'Stroma_Region', 'Ambiguous_Region']:
+                # Get the strict threshold for this cell in this context
+                safe_limit = get_thresh(cell, context)
+
+                # Identify rows in this context
+                ctx_mask = predictions_df['structural_context'] == context
+
+                # Check if probability exceeds safety limit
+                pass_mask = predictions_df.loc[ctx_mask, prob_col] > safe_limit
+
+                # Update the boolean column
+                predictions_df.loc[ctx_mask.index[pass_mask], col_name] = True
+
+        # ---------------------------------------------------------
+        # STEP 3: RESOLVE HIERARCHY (Leaf > Parent > Root)
+        # ---------------------------------------------------------
+        # We want the most specific label possible.
+        # Order: Leaves first, then Parents, then Root.
+
+        hierarchy_order = [
+            # Leaves (Most Specific)
+            ('CD4', 'n_cd4'),
+            ('CD8', 'n_cd8'),
+            ('M1', 'n_m1'),
+            ('M2', 'n_m2'),
+            # Parents (Mid Specificity)
+            ('T_Cell', 'n_tcell'),
+            ('Macrophage', 'n_macrophage'),
+            # Root (Least Specific)
+            ('Immune', 'n_immune')
+        ]
+
+        predictions_df['Final_Call'] = 'Background'  # Default
+
+        # Iterate in reverse order of specificity if we want to overwrite?
+        # Actually better: Iterate most specific to least, and only assign if empty.
+        # OR: Iterate Least -> Most and overwrite. (E.g. Call Immune, then overwrite with T-Cell, then CD4)
+
+        # Let's do Least -> Most Specific (Overwrite strategy)
+        # This ensures if it's both Immune and CD4, it ends up as CD4.
+
+        # 1. Base Structure
+        predictions_df.loc[is_tumor, 'Final_Call'] = 'Tumor'
+        predictions_df.loc[is_stroma, 'Final_Call'] = 'Stroma'
+        # Ambiguous remains 'Background' or 'Ambiguous'
+
+        # 2. Immune Overlays
+        # We look at the 'Is_X' columns we just calculated
+        reverse_hierarchy = hierarchy_order[::-1]  # Start with Immune, end with Leaves
+
+        for label, node in reverse_hierarchy:
+            # If it passed the threshold check...
+            passed = predictions_df[f'Is_{node}']
+
+            # ...assign the label. This overwrites previous broader labels.
+            predictions_df.loc[passed, 'Final_Call'] = label
+
+        return predictions_df
