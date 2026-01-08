@@ -209,115 +209,110 @@ class VirchowInferenceEngine:
 
         return results
 
-
-    def apply_hierarchical_thresholds(self, predictions_df, thresholds_csv):
+    def apply_cellcalling_thresholds(self, predictions_df, thresholds_csv):
         """
-        Applies strict hierarchical thresholding to prediction probabilities.
+        Applies thresholds to allow MULTIPLE labels per tile.
 
-        1. Defines Structural Context (Tumor/Stroma/Ambiguous) based on global thresholds.
-        2. Applies context-specific thresholds for immune cells.
-        3. Resolves final identity (Leaf > Parent > Root).
+        1. Determines 'Context' (Tumor/Stroma/Ambiguous) to select the correct strictness level.
+        2. Flags ANY cell type (Structure or Immune) that exceeds its specific safety threshold.
+        3. Returns boolean columns (e.g., 'Is_Tumor', 'Is_CD8') which can co-occur.
         """
-        print("Loading thresholds and applying hierarchical logic...")
+        print("Loading thresholds for multi-label tile calling...")
 
         # 1. Load Thresholds
+        # Expects columns: ['cell', 'context', 'threshold']
         thresh_df = pd.read_csv(thresholds_csv)
 
-        # Helper to get a specific threshold value
-        def get_thresh(cell, context):
-            val = thresh_df.loc[(thresh_df['cell'] == cell) & (thresh_df['context'] == context), 'threshold']
-            return val.values[0] if len(val) > 0 else 0.99  # Safe fallback
+        # Helper: Fast lookup for thresholds
+        # We turn the CSV into a dict: dict[cell][context] = threshold
+        thresh_lookup = {}
+        for cell in thresh_df['cell'].unique():
+            thresh_lookup[cell] = {}
+            sub = thresh_df[thresh_df['cell'] == cell]
+            for _, row in sub.iterrows():
+                thresh_lookup[cell][row['context']] = row['threshold']
 
         # ---------------------------------------------------------
-        # STEP 1: DEFINE STRUCTURAL CONTEXT
+        # STEP 1: DEFINE STRUCTURAL CONTEXT (The "Environment")
         # ---------------------------------------------------------
-        # Get global thresholds for structure
-        t_thresh = get_thresh('n_tumor', 'Global')
-        s_thresh = get_thresh('n_stroma', 'Global')
+        # We need to know if the tile is "Tumor-y" or "Stroma-y" to pick
+        # the right immune thresholds.
 
-        # Create Masks
-        # Must exceed threshold AND be the dominant structural signal
-        is_tumor = (predictions_df['PredProb_n_tumor'] > t_thresh) & \
-                   (predictions_df['PredProb_n_tumor'] > predictions_df['PredProb_n_stroma'])
+        # Get Global thresholds for structure
+        t_thresh = thresh_lookup['n_tumor'].get('Global', 0.90)
+        s_thresh = thresh_lookup['n_stroma'].get('Global', 0.90)
 
-        is_stroma = (predictions_df['PredProb_n_stroma'] > s_thresh) & \
-                    (predictions_df['PredProb_n_stroma'] > predictions_df['PredProb_n_tumor'])
+        # Define Dominant Context
+        # Note: We rely on dominance here just to select the *immune* threshold strictness.
+        # We aren't making the final "Is_Tumor" call yet.
+        is_tumor_context = (predictions_df['PredProb_n_tumor'] > predictions_df['PredProb_n_stroma']) & \
+                           (predictions_df['PredProb_n_tumor'] > t_thresh)
 
-        # Everything else is Ambiguous
-        # (This includes low-confidence predictions or where tumor ~= stroma)
-        predictions_df['structural_context'] = 'Ambiguous_Region'
-        predictions_df.loc[is_tumor, 'structural_context'] = 'Tumor_Region'
-        predictions_df.loc[is_stroma, 'structural_context'] = 'Stroma_Region'
+        is_stroma_context = (predictions_df['PredProb_n_stroma'] > predictions_df['PredProb_n_tumor']) & \
+                            (predictions_df['PredProb_n_stroma'] > s_thresh)
 
-        print(f"Contexts assigned: {predictions_df['structural_context'].value_counts().to_dict()}")
+        # Assign temporary context strings for lookup
+        context_series = pd.Series('Ambiguous_Region', index=predictions_df.index)
+        context_series[is_tumor_context] = 'Tumor_Region'
+        context_series[is_stroma_context] = 'Stroma_Region'
 
-        # ---------------------------------------------------------
-        # STEP 2: APPLY CONTEXT-SPECIFIC THRESHOLDS
-        # ---------------------------------------------------------
-        # We will store boolean 'Pass' columns for every cell type
-        immune_nodes = [c for c in thresh_df['cell'].unique() if c not in ['n_tumor', 'n_stroma']]
-
-        for cell in immune_nodes:
-            col_name = f'Is_{cell}'
-            prob_col = f'PredProb_{cell}'
-            predictions_df[col_name] = False  # Initialize as False
-
-            # Apply for each context separately
-            for context in ['Tumor_Region', 'Stroma_Region', 'Ambiguous_Region']:
-                # Get the strict threshold for this cell in this context
-                safe_limit = get_thresh(cell, context)
-
-                # Identify rows in this context
-                ctx_mask = predictions_df['structural_context'] == context
-
-                # Check if probability exceeds safety limit
-                pass_mask = predictions_df.loc[ctx_mask, prob_col] > safe_limit
-
-                # Update the boolean column
-                predictions_df.loc[ctx_mask.index[pass_mask], col_name] = True
+        # Store context if you want to inspect it later
+        predictions_df['Threshold_Context'] = context_series
 
         # ---------------------------------------------------------
-        # STEP 3: RESOLVE HIERARCHY (Leaf > Parent > Root)
+        # STEP 2: APPLY INDEPENDENT CHECKS (Multi-Label)
         # ---------------------------------------------------------
-        # We want the most specific label possible.
-        # Order: Leaves first, then Parents, then Root.
+        # We iterate through every known cell type in the lookup table.
+        # If a tile passes the threshold, it gets the label.
 
-        hierarchy_order = [
-            # Leaves (Most Specific)
-            ('CD4', 'n_cd4'),
-            ('CD8', 'n_cd8'),
-            ('M1', 'n_m1'),
-            ('M2', 'n_m2'),
-            # Parents (Mid Specificity)
-            ('T_Cell', 'n_tcell'),
-            ('Macrophage', 'n_macrophage'),
-            # Root (Least Specific)
-            ('Immune', 'n_immune')
-        ]
+        all_cells = list(thresh_lookup.keys())
 
-        predictions_df['Final_Call'] = 'Background'  # Default
+        for cell in all_cells:
+            # 1. Setup Column Names
+            prob_col = f"PredProb_{cell}"
+            flag_col = f"Is_{cell}"
 
-        # Iterate in reverse order of specificity if we want to overwrite?
-        # Actually better: Iterate most specific to least, and only assign if empty.
-        # OR: Iterate Least -> Most and overwrite. (E.g. Call Immune, then overwrite with T-Cell, then CD4)
+            # Skip if model didn't predict this cell
+            if prob_col not in predictions_df.columns:
+                continue
 
-        # Let's do Least -> Most Specific (Overwrite strategy)
-        # This ensures if it's both Immune and CD4, it ends up as CD4.
+            predictions_df[flag_col] = False
 
-        # 1. Base Structure
-        predictions_df.loc[is_tumor, 'Final_Call'] = 'Tumor'
-        predictions_df.loc[is_stroma, 'Final_Call'] = 'Stroma'
-        # Ambiguous remains 'Background' or 'Ambiguous'
+            # 2. Structure Nodes (n_tumor, n_stroma) usually have 'Global' thresholds
+            if 'Global' in thresh_lookup[cell]:
+                limit = thresh_lookup[cell]['Global']
+                predictions_df.loc[predictions_df[prob_col] > limit, flag_col] = True
 
-        # 2. Immune Overlays
-        # We look at the 'Is_X' columns we just calculated
-        reverse_hierarchy = hierarchy_order[::-1]  # Start with Immune, end with Leaves
+            # 3. Immune Nodes have Context-Specific thresholds
+            else:
+                # We must apply different thresholds based on the Context we defined in Step 1
+                for ctx in ['Tumor_Region', 'Stroma_Region', 'Ambiguous_Region']:
+                    # Get threshold for this cell in this context
+                    limit = thresh_lookup[cell].get(ctx, 0.99)  # Default to strict 0.99 if missing
 
-        for label, node in reverse_hierarchy:
-            # If it passed the threshold check...
-            passed = predictions_df[f'Is_{node}']
+                    # Find tiles belonging to this context
+                    ctx_mask = (context_series == ctx)
 
-            # ...assign the label. This overwrites previous broader labels.
-            predictions_df.loc[passed, 'Final_Call'] = label
+                    # Apply threshold
+                    pass_mask = (predictions_df.loc[ctx_mask, prob_col] > limit)
+
+                    # Set True for passing tiles
+                    predictions_df.loc[pass_mask.index[pass_mask], flag_col] = True
+
+        # ---------------------------------------------------------
+        # OPTIONAL: SUMMARY COLUMN
+        # ---------------------------------------------------------
+        # Create a human-readable list of labels for each tile
+        # e.g., "Tumor; CD8; T_Cell"
+
+        flag_cols = [c for c in predictions_df.columns if c.startswith("Is_")]
+
+        def get_labels(row):
+            return [col.replace("Is_", "").replace("n_", "").upper() for col in flag_cols if row[col]]
+
+        # Applying row-wise is slow for millions of rows.
+        # Only uncomment if dataset is small (<100k) or for debugging.
+        # predictions_df['Labels_List'] = predictions_df.apply(get_labels, axis=1)
+        # predictions_df['Labels_List'] = predictions_df.apply(get_labels, axis=1)
 
         return predictions_df
