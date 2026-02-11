@@ -11,7 +11,7 @@ from timm.layers import SwiGLUPacked
 from safetensors.torch import load_file
 
 ## our model ##
-from .models.model_virchow2_v2 import Virchow2MultiHeadModel
+from .models.model_virchow2_v3 import Virchow2MultiHeadModel
 
 # Ensure truncated images don't crash PIL
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -33,7 +33,7 @@ class ReinhardNormalizer:
             self.target_means = np.array(target_means, dtype=np.float32)
 
         if target_stds is None:
-            self.target_stds = np.array([53.17,  4.72,  5.23], dtype=np.float32)
+            self.target_stds = np.array([53.17, 4.72, 5.23], dtype=np.float32)
         else:
             self.target_stds = np.array(target_stds, dtype=np.float32)
 
@@ -56,9 +56,17 @@ class VirchowInferenceEngine:
     Supports .pth, .safetensors, and Test Time Augmentation (TTA).
     """
 
-    def __init__(self, model_path, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, model_path=None, device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
 
+        # If no model path is provided, stop here (lightweight init)
+        if model_path is None:
+            print("Initialized VirchowInferenceEngine without loading a model.")
+            self.model = None
+            self.processor = None
+            return
+
+        # --- Heavy Initialization (only runs if model_path is provided) ---
         if isinstance(model_path, list):
             model_path = model_path[0]
         self.model_path = Path(model_path)
@@ -209,6 +217,74 @@ class VirchowInferenceEngine:
 
         return results
 
+    def extract_embeddings_batch(self, images, metadata_list, use_tta=False,
+                                 latent_types=['backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac']):
+        """
+        Extracts latent embeddings from a list of PIL images.
+
+        Args:
+            images: List of PIL images.
+            metadata_list: List of dictionaries containing metadata (tile coords, etc).
+            use_tta (bool): If True, applies Test Time Augmentation and averages embeddings.
+            latent_types (list): Which latent representations to extract. Options:
+                - 'backbone': Raw 2560D combined embedding (class token + pooled patches)
+                - 'structure': 512D structure head latent
+                - 'immune_shared': 128D shared immune latent
+                - 'immune_tcell': 64D T-cell specific latent
+                - 'immune_mac': 64D Macrophage specific latent
+
+        Returns:
+            List of dictionaries with metadata + embeddings as numpy arrays
+        """
+        if not images:
+            return []
+
+        results = []
+
+        for idx, img in enumerate(images):
+            meta = metadata_list[idx].copy()
+
+            try:
+                # --- TTA LOGIC ---
+                if use_tta:
+                    variants = self._get_tta_variants(img)
+                    tensors = [self.processor(v) for v in variants]
+                    input_batch = torch.stack(tensors).to(self.device)
+                else:
+                    input_batch = self.processor(img).unsqueeze(0).to(self.device)
+
+                with torch.no_grad():
+                    # Extract latents using the model's get_latents method
+                    latents_dict = self.model.get_latents(input_batch)
+
+                    # --- AGGREGATION ---
+                    # If TTA, average across the batch dimension (8 variants)
+                    # Otherwise, just squeeze the batch dimension
+                    for latent_name in latent_types:
+                        if latent_name in latents_dict:
+                            latent_tensor = latents_dict[latent_name]
+
+                            if use_tta:
+                                # Average across TTA variants
+                                latent_avg = torch.mean(latent_tensor, dim=0).cpu().numpy()
+                            else:
+                                # Single image - squeeze batch dim
+                                latent_avg = latent_tensor.squeeze(0).cpu().numpy()
+
+                            # Store as flat array
+                            meta[f'embedding_{latent_name}'] = latent_avg
+
+                if use_tta:
+                    meta['tta_enabled'] = True
+
+                results.append(meta)
+
+            except Exception as e:
+                print(f"Error extracting embeddings for image {idx}: {e}")
+                continue
+
+        return results
+
     def apply_cellcalling_thresholds(self, predictions_df, thresholds_csv):
         """
         Applies thresholds to allow MULTIPLE labels per tile.
@@ -218,6 +294,10 @@ class VirchowInferenceEngine:
         3. Returns boolean columns (e.g., 'Is_Tumor', 'Is_CD8') which can co-occur.
         """
         print("Loading thresholds for multi-label tile calling...")
+
+        if type(predictions_df) == str:
+            # 0. Load preds
+            predictions_df = pd.read_csv(predictions_df)
 
         # 1. Load Thresholds
         # Expects columns: ['cell', 'context', 'threshold']
@@ -239,17 +319,19 @@ class VirchowInferenceEngine:
         # the right immune thresholds.
 
         # Get Global thresholds for structure
-        t_thresh = thresh_lookup['n_tumor'].get('Global', 0.90)
-        s_thresh = thresh_lookup['n_stroma'].get('Global', 0.90)
+        t_thresh = thresh_lookup['prob_tumor'].get('Global', 0.90)
+        s_thresh = thresh_lookup['prob_stroma'].get('Global', 0.90)
+
+        print(f'using {t_thresh} and {s_thresh} structural thresholds')
 
         # Define Dominant Context
         # Note: We rely on dominance here just to select the *immune* threshold strictness.
         # We aren't making the final "Is_Tumor" call yet.
-        is_tumor_context = (predictions_df['PredProb_n_tumor'] > predictions_df['PredProb_n_stroma']) & \
-                           (predictions_df['PredProb_n_tumor'] > t_thresh)
+        is_tumor_context = (predictions_df['prob_tumor'] > predictions_df['prob_stroma']) & \
+                           (predictions_df['prob_tumor'] > t_thresh)
 
-        is_stroma_context = (predictions_df['PredProb_n_stroma'] > predictions_df['PredProb_n_tumor']) & \
-                            (predictions_df['PredProb_n_stroma'] > s_thresh)
+        is_stroma_context = (predictions_df['prob_stroma'] > predictions_df['prob_tumor']) & \
+                            (predictions_df['prob_stroma'] > s_thresh)
 
         # Assign temporary context strings for lookup
         context_series = pd.Series('Ambiguous_Region', index=predictions_df.index)
@@ -268,12 +350,14 @@ class VirchowInferenceEngine:
         all_cells = list(thresh_lookup.keys())
 
         for cell in all_cells:
+
             # 1. Setup Column Names
-            prob_col = f"PredProb_{cell}"
-            flag_col = f"Is_{cell}"
+            prob_col = cell
+            flag_col = cell.replace('prob_', 'called_')
 
             # Skip if model didn't predict this cell
             if prob_col not in predictions_df.columns:
+                print(f'{prob_col} not in pred columns...')
                 continue
 
             predictions_df[flag_col] = False

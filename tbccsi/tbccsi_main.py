@@ -1,4 +1,3 @@
-
 from tqdm import tqdm
 from PIL import ImageFile
 from pathlib import Path
@@ -10,7 +9,8 @@ from .wsi_tiler import WSITiler
 from .model_inference import VirchowInferenceEngine
 from .model_inference import ReinhardNormalizer
 from .wsi_plot import WSIPlotter
-#from .wsi_segmentation import CellSegmentationProcessor
+
+# from .wsi_segmentation import CellSegmentationProcessor
 
 # Ensure truncated images don't crash PIL
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -135,7 +135,6 @@ def run_virchow_pred(sample_id,
                 pos_ratio = (preds_df['pred_structure'] == 1).mean()
                 print(f"Positive Ratio (Class 1): {pos_ratio:.4f}")
 
-
     # make a heatmap
     print("Building Heatmap...")
     if (not do_inference) and (do_plot is not "None"):
@@ -148,6 +147,219 @@ def run_virchow_pred(sample_id,
             print("heatmap failed..." + str(e))
 
 
+# --- 4. Embedding Extraction Function ---
+def run_virchow_embed(sample_id,
+                      input_slide,
+                      work_dir,
+                      tile_file,
+                      model_path,
+                      batch_size,
+                      do_tta=False,
+                      latent_types=None,
+                      save_format='npz'):
+    """
+    Extract latent embeddings from WSI tiles.
+
+    Args:
+        sample_id: Sample identifier
+        input_slide: Path to the WSI file
+        work_dir: Working directory for outputs
+        tile_file: Tile coordinate file
+        model_path: Path to trained model
+        batch_size: GPU batch size
+        do_tta: Apply test-time augmentation
+        latent_types: List of latent types to extract. Options:
+            ['backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac']
+            If None, extracts all types.
+        save_format: Output format - 'npz' (compressed arrays) or 'csv' (flattened)
+    """
+
+    # Default to all latent types if not specified
+    if latent_types is None:
+        latent_types = ['backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac']
+
+    # Validate latent types
+    valid_types = {'backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac'}
+    latent_types = [lt for lt in latent_types if lt in valid_types]
+
+    if not latent_types:
+        print("Error: No valid latent types specified.")
+        return
+
+    RAM_BATCH_SIZE = 256
+
+    print("\n-----------------------------------------")
+    print(f"Extracting Embeddings: {sample_id}")
+    print(f"Latent types: {latent_types}")
+    print("-----------------------------------------\n")
+
+    output_dir = Path(work_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    tile_file_path = output_dir / tile_file
+
+    # 1. Initialize Tiler
+    tiler = WSITiler(sample_id, input_slide, output_dir, tile_file_path)
+
+    # 2. Ensure Tile Grid Exists
+    if not tile_file_path.exists():
+        print("Creating tile grid...")
+        tiler.create_tile_file()
+
+    # 3. Load Coordinate Grid
+    try:
+        coords_df = pd.read_csv(tile_file_path, comment='#')
+    except FileNotFoundError:
+        print("Error: Tile file could not be found or created.")
+        return
+
+    if coords_df.empty:
+        print("Warning: No tissue tiles found in grid.")
+        return
+
+    # 4. Initialize Components
+    normalizer = ReinhardNormalizer()
+    engine = VirchowInferenceEngine(model_path)
+
+    all_embeddings = []
+
+    # Process in chunks to manage RAM
+    num_chunks = max(1, len(coords_df) // RAM_BATCH_SIZE)
+    df_chunks = np.array_split(coords_df, num_chunks)
+
+    print(f"Processing {len(coords_df)} tiles in {len(df_chunks)} RAM batches...")
+
+    for i, chunk in enumerate(tqdm(df_chunks, desc="Extracting Embeddings")):
+        if chunk.empty:
+            continue
+
+        batch_images = []
+        batch_metadata = []
+
+        # --- A. Extract & Normalize Tiles ---
+        for _, row in chunk.iterrows():
+            try:
+                x, y, tid = int(row['x']), int(row['y']), int(row['tile_id'])
+
+                tile_raw = tiler._read_region(
+                    (x, y),
+                    tiler.level,
+                    (tiler.tile_size, tiler.tile_size)
+                ).convert('RGB')
+
+                tile_norm = normalizer.normalize(tile_raw)
+
+                batch_images.append(tile_norm)
+                batch_metadata.append(row.to_dict())
+
+            except Exception as e:
+                print(f"Error reading tile {tid}: {e}")
+
+        # --- B. Extract Embeddings ---
+        if batch_images:
+            # Sub-batching for GPU
+            for k in range(0, len(batch_images), batch_size):
+                sub_imgs = batch_images[k: k + batch_size]
+                sub_meta = batch_metadata[k: k + batch_size]
+
+                embeddings = engine.extract_embeddings_batch(
+                    sub_imgs,
+                    sub_meta,
+                    use_tta=do_tta,
+                    latent_types=latent_types
+                )
+                all_embeddings.extend(embeddings)
+
+        # --- C. Cleanup ---
+        del batch_images
+        del batch_metadata
+
+    # 5. Save Results
+    if all_embeddings:
+        if save_format == 'npz':
+            # Save as compressed numpy arrays (more efficient for large embeddings)
+            save_embeddings_npz(all_embeddings, output_dir, sample_id, latent_types)
+        else:
+            # Save as CSV (easier to inspect, but larger files)
+            save_embeddings_csv(all_embeddings, output_dir, sample_id, latent_types)
+
+        print(f"\nExtracted embeddings for {len(all_embeddings)} tiles")
+        print(f"Saved to {output_dir}")
+
+
+def save_embeddings_npz(embeddings_list, output_dir, sample_id, latent_types):
+    """
+    Save embeddings as compressed .npz file with separate arrays per latent type.
+    Also saves metadata as CSV.
+    """
+    # Separate metadata from embeddings
+    metadata_records = []
+    embedding_arrays = {lt: [] for lt in latent_types}
+
+    for record in embeddings_list:
+        # Extract metadata (everything except embeddings)
+        meta = {k: v for k, v in record.items() if not k.startswith('embedding_')}
+        metadata_records.append(meta)
+
+        # Extract embeddings
+        for lt in latent_types:
+            embed_key = f'embedding_{lt}'
+            if embed_key in record:
+                embedding_arrays[lt].append(record[embed_key])
+
+    # Convert to numpy arrays
+    for lt in latent_types:
+        if embedding_arrays[lt]:
+            embedding_arrays[lt] = np.array(embedding_arrays[lt])
+
+    # Save embeddings
+    npz_path = output_dir / f"{sample_id}_embeddings.npz"
+    np.savez_compressed(npz_path, **embedding_arrays)
+    print(f"Saved embeddings to {npz_path}")
+
+    # Print dimensions for each latent type
+    for lt in latent_types:
+        if lt in embedding_arrays and len(embedding_arrays[lt]) > 0:
+            print(f"  {lt}: shape {embedding_arrays[lt].shape}")
+
+    # Save metadata
+    meta_df = pd.DataFrame(metadata_records)
+    meta_path = output_dir / f"{sample_id}_embedding_metadata.csv"
+    meta_df.to_csv(meta_path, index=False)
+    print(f"Saved metadata to {meta_path}")
+
+
+def save_embeddings_csv(embeddings_list, output_dir, sample_id, latent_types):
+    """
+    Save embeddings as CSV with flattened embedding dimensions.
+    Warning: This can create very wide DataFrames for high-dimensional embeddings.
+    """
+    # Flatten embeddings into columns
+    flattened_records = []
+
+    for record in embeddings_list:
+        flat_record = {}
+
+        # Copy metadata
+        for k, v in record.items():
+            if not k.startswith('embedding_'):
+                flat_record[k] = v
+
+        # Flatten embeddings
+        for lt in latent_types:
+            embed_key = f'embedding_{lt}'
+            if embed_key in record:
+                embedding = record[embed_key]
+                # Create columns like: backbone_0, backbone_1, ..., backbone_2559
+                for i, val in enumerate(embedding):
+                    flat_record[f'{lt}_{i}'] = val
+
+        flattened_records.append(flat_record)
+
+    # Save as CSV
+    df = pd.DataFrame(flattened_records)
+    csv_path = output_dir / f"{sample_id}_embeddings.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Saved embeddings to {csv_path}")
+    print(f"  DataFrame shape: {df.shape}")
 
 ## EOF ##
-
