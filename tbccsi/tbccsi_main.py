@@ -156,7 +156,7 @@ def run_virchow_embed(sample_id,
                       batch_size,
                       do_tta=False,
                       latent_types=None,
-                      save_format='npz'):
+                      save_format='csv'):
     """
     Extract latent embeddings from WSI tiles.
 

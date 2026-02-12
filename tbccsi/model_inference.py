@@ -11,7 +11,8 @@ from timm.layers import SwiGLUPacked
 from safetensors.torch import load_file
 
 ## our model ##
-from .models.model_virchow2_v3 import Virchow2MultiHeadModel
+#from .models.model_virchow2_v3 import Virchow2MultiHeadModel
+from .models.model_virchow2_v2 import Virchow2MultiHeadModel
 
 # Ensure truncated images don't crash PIL
 ImageFile.LOAD_TRUNCATED_IMAGES = True
@@ -108,6 +109,7 @@ class VirchowInferenceEngine:
         self.model.eval()
         print(f"Model loaded on {self.device}.")
 
+
     def _get_tta_variants(self, img):
         """
         Generates 8 Dihedral variants of the image:
@@ -129,6 +131,7 @@ class VirchowInferenceEngine:
         variants.append(img_flip.rotate(270, expand=True))
 
         return variants
+
 
     def predict_batch(self, images, metadata_list, use_tta=False):
         """
@@ -217,6 +220,7 @@ class VirchowInferenceEngine:
 
         return results
 
+
     def extract_embeddings_batch(self, images, metadata_list, use_tta=False,
                                  latent_types=['backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac']):
         """
@@ -284,6 +288,7 @@ class VirchowInferenceEngine:
                 continue
 
         return results
+
 
     def apply_cellcalling_thresholds(self, predictions_df, thresholds_csv):
         """
