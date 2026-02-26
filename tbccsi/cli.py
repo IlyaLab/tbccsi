@@ -1,49 +1,122 @@
 # tbccsi/cli.py
 
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 import typer
 
-# Note the relative import '.' for a module in the same package
 from . import tbccsi_main as tbccsi_
 from .wsi_tiler import WSITiler
-from .model_inference import VirchowInferenceEngine
+from .model_inference import InferenceEngine
+from .model_config import load_config_for_model_class
 
-# 1. Create the Typer "app" object that pyproject.toml is looking for
+# Registry of short model names → model_class strings.
+# This lets users say --model-name daft_macrophage instead of passing a config path.
+# Add new models here as you create them.
+MODEL_REGISTRY = {
+    "virchow2_multihead_v2":  "tbccsi.models.model_virchow2_v2.Virchow2MultiHeadModel",
+    "virchow2_multihead_v3": "tbccsi.models.model_virchow2_v3.Virchow2MultiHeadModel",
+    "daft_macrophage":     "tbccsi.models.daft_macrophage.DAFT_Virchow2_Macrophage",
+}
+
+
+def _resolve_model_config(model_config, model_name):
+    """
+    Resolve the model config from either --model-config or --model-name.
+
+    Priority:
+      1. --model-config (explicit path)
+      2. --model-name (looks up package-bundled config)
+      3. None (auto-detect from weights dir, or legacy fallback)
+    """
+    if model_config is not None:
+        return model_config
+
+    if model_name is not None:
+        model_class = MODEL_REGISTRY.get(model_name)
+        if model_class is None:
+            available = ", ".join(MODEL_REGISTRY.keys())
+            raise typer.BadParameter(
+                f"Unknown model name '{model_name}'. Available: {available}"
+            )
+        config = load_config_for_model_class(model_class)
+        if config is None:
+            raise typer.BadParameter(
+                f"No model_config.yaml found in package for '{model_name}'. "
+                f"Looked near module: {model_class}"
+            )
+        return config
+
+    return None
+
 app = typer.Typer(
     help="A CLI for tile-based classification.",
     add_completion=False
 )
 
 
-# 2. Use the @app.command() decorator instead of a main() function
 @app.command()
 def pred(
-        # Typer uses type hints to define arguments. It's much cleaner!
         sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
         input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
         tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
-        model_path: Path = typer.Option(..., "-m", "--model-path", help="One or more paths to the trained models."),
+        model_path: Path = typer.Option(..., "-m", "--model-path", help="Path to the trained model weights."),
+        model_config: Optional[Path] = typer.Option(
+            None, "-c", "--model-config",
+            help="Path to model_config.yaml. If omitted, looks in the same dir as --model-path."
+        ),
+        model_name: Optional[str] = typer.Option(
+            None, "-n", "--model-name",
+            help="Short model name (e.g. 'daft_macrophage'). "
+                 "Resolves config from the tbccsi/models/ package. "
+                 "Alternative to --model-config."
+        ),
         batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
         do_inference: bool = typer.Option(False, "--do-inference", help="Run model inference?"),
         do_tta: bool = typer.Option(False, "--do-tta", help="Run test-time augmentation?"),
-        do_plot: str = typer.Option("None", "--do-plot", help="Select column name to plot.")
+        do_plot: str = typer.Option("None", "--do-plot", help="Select column name to plot."),
+        domain_id: Optional[int] = typer.Option(
+            None, "--domain-id",
+            help="Domain ID for domain-aware models (e.g. DAFT). Overrides config default."
+        ),
 ):
     """
     Run the WSI prediction pipeline.
+
+    Examples:
+        # Legacy (auto-detects Virchow2MultiHeadModel if no config found):
+        tbccsi pred --sample-id S1 --input-slide slide.svs --work-dir ./out \\
+            --tile-file tiles.csv -m model.pth --do-inference
+
+        # Config-driven (any model):
+        tbccsi pred --sample-id S1 --input-slide slide.svs --work-dir ./out \\
+            --tile-file tiles.csv -m ./my_model/best.pth -c ./my_model/model_config.yaml \\
+            --do-inference
+
+        # DAFT model with domain override:
+        tbccsi pred ... -m daft_best.pth -c daft_config.yaml --domain-id 1 --do-inference
     """
     typer.echo(f"Running inference for sample: {sample_id}")
-    tbccsi_.run_virchow_pred(
+
+    # Build forward kwargs from CLI flags
+    forward_kwargs = {}
+    if domain_id is not None:
+        forward_kwargs['domain_id'] = domain_id
+
+    resolved_config = _resolve_model_config(model_config, model_name)
+
+    tbccsi_.run_pred(
         sample_id=sample_id,
         input_slide=input_slide,
         work_dir=work_dir,
         tile_file=tile_file,
         model_path=model_path,
+        model_config=resolved_config,
         batch_size=batch_size,
         do_inference=do_inference,
         do_tta=do_tta,
-        do_plot=do_plot
+        do_plot=do_plot,
+        forward_kwargs=forward_kwargs,
     )
     typer.echo("✅ Pipeline finished successfully.")
 
@@ -71,10 +144,8 @@ def tile(
     typer.echo("✅ Tiling finished successfully.")
 
 
-# 3. calling cells
 @app.command()
 def call(
-        # Typer uses type hints to define arguments. It's much cleaner!
         sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
         pred_file: Path = typer.Option(..., "--pred-file", help="Prediction output from tbccsi pred."),
@@ -86,9 +157,9 @@ def call(
     """
     typer.echo(f"Calling cell types: {sample_id}")
 
-    vie = VirchowInferenceEngine()
+    engine = InferenceEngine()  # lightweight, no model loaded
 
-    df = vie.apply_cellcalling_thresholds(
+    df = engine.apply_cellcalling_thresholds(
         predictions_df=str(pred_file),
         thresholds_csv=str(thresh_file)
     )
@@ -99,7 +170,6 @@ def call(
     typer.echo(f"✅ Cell calling finished. Saved to {output_path}")
 
 
-# 4. Extract embeddings
 @app.command()
 def embed(
         sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
@@ -107,58 +177,64 @@ def embed(
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
         tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
         model_path: Path = typer.Option(..., "-m", "--model-path", help="Path to the trained model."),
+        model_config: Optional[Path] = typer.Option(
+            None, "-c", "--model-config",
+            help="Path to model_config.yaml."
+        ),
+        model_name: Optional[str] = typer.Option(
+            None, "-n", "--model-name",
+            help="Short model name (e.g. 'daft_macrophage'). "
+                 "Resolves config from the tbccsi/models/ package."
+        ),
         batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
         do_tta: bool = typer.Option(False, "--do-tta", help="Run test-time augmentation?"),
         latent_types: List[str] = typer.Option(
             None,
             "--latent-type",
-            help="Latent types to extract. Options: backbone, structure, immune_shared, immune_tcell, immune_mac. "
-                 "Can be specified multiple times. If not specified, extracts all types."
+            help="Latent types to extract. Can be specified multiple times. "
+                 "If not specified, extracts all types from the model."
         ),
         save_format: str = typer.Option(
             "npz",
             "--save-format",
             help="Output format: 'npz' (compressed numpy arrays) or 'csv' (flattened dataframe)."
-        )
+        ),
+        domain_id: Optional[int] = typer.Option(
+            None, "--domain-id",
+            help="Domain ID for domain-aware models."
+        ),
 ):
     """
     Extract latent embeddings from WSI tiles.
-
-    Examples:
-        # Extract all latent types as NPZ
-        tbccsi embed --sample-id TCGA-01 --input-slide slide.svs --work-dir ./output --tile-file tiles.csv -m model.pth
-
-        # Extract only structure and T-cell embeddings
-        tbccsi embed --sample-id TCGA-01 --input-slide slide.svs --work-dir ./output --tile-file tiles.csv -m model.pth \\
-            --latent-type structure --latent-type immune_tcell
-
-        # Extract with TTA and save as CSV
-        tbccsi embed --sample-id TCGA-01 --input-slide slide.svs --work-dir ./output --tile-file tiles.csv -m model.pth \\
-            --do-tta --save-format csv
     """
     typer.echo(f"Extracting embeddings for sample: {sample_id}")
 
-    # Validate save format
     if save_format not in ['npz', 'csv']:
         typer.echo("Error: save_format must be 'npz' or 'csv'", err=True)
         raise typer.Exit(1)
 
-    tbccsi_.run_virchow_embed(
+    forward_kwargs = {}
+    if domain_id is not None:
+        forward_kwargs['domain_id'] = domain_id
+
+    resolved_config = _resolve_model_config(model_config, model_name)
+
+    tbccsi_.run_embed(
         sample_id=sample_id,
         input_slide=input_slide,
         work_dir=work_dir,
         tile_file=tile_file,
         model_path=model_path,
+        model_config=resolved_config,
         batch_size=batch_size,
         do_tta=do_tta,
         latent_types=latent_types,
-        save_format=save_format
+        save_format=save_format,
+        forward_kwargs=forward_kwargs,
     )
 
     typer.echo("✅ Embedding extraction finished successfully.")
 
 
-# This part is only for making the script runnable with "python cli.py"
-# It's not strictly necessary for the installed CLI to work.
 if __name__ == "__main__":
     app()
