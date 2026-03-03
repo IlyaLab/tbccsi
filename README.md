@@ -55,7 +55,7 @@ The `tile` command scans a whole slide image, detects tissue regions, and genera
 **Basic Usage (Generate Coordinates Only):**
 
 ```bash
-tbccsi tile --slide-path "/path/to/slide.vsi" --output-dir "./output" --sample-id "Sample_001"
+tbccsi tile --input-slide "/path/to/slide.vsi" --work-dir "./output" --sample-id "Sample_001"
 
 ```
 
@@ -63,17 +63,18 @@ tbccsi tile --slide-path "/path/to/slide.vsi" --output-dir "./output" --sample-i
 Add the `--save-tiles` flag to write `.png` files to disk.
 
 ```bash
-tbccsi tile --slide-path "/path/to/slide.svs" --output-dir "./output" --sample-id "Sample_001" --save-tiles
+tbccsi tile --input-slide "/path/to/slide.svs" --work-dir "./output" --sample-id "Sample_001" --save-tiles
 
 ```
 
 **Arguments:**
 
-* `--slide-path`: Path to the input WSI file (`.svs`, `.vsi`, `.tiff`).
-* `--output-dir`: Directory where results (CSV and/or tiles) will be saved.
 * `--sample-id`: Unique identifier for the sample (used in filenames).
+* `--input-slide`: Path to the input WSI file (`.svs`, `.vsi`, `.tiff`).
+* `--work-dir`: Directory where results (CSV and/or tiles) will be saved.
 * `--tile-size`: (Optional) Size of tiles in pixels (default: 224).
 * `--save-tiles / --no-save-tiles`: Whether to save actual images to disk (default: `False`).
+* `--help`: Show the help!
 
 ---
 
