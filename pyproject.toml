@@ -9,14 +9,12 @@ description = "TBCCSI project with multihead models"
 readme = "README.md"
 requires-python = ">=3.10"
 
-# FIX 1: License is now a simple string (SPDX identifier) to fix the deprecation warning
-license = "MIT"
+license = {text = "MIT"}
 
 authors = [
   { name = "IlyaLab", email = "your.email@example.com" },
 ]
 
-# Add your project dependencies here
 dependencies = [
     "torch",
     "numpy",
