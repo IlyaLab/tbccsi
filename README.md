@@ -5,7 +5,7 @@
 ## Features
 
 * **Multi-format Support:** Natively reads `.svs` (OpenSlide), `.tiff` (TiffFile), and `.vsi` (SlideIO).
-* **Smart Tiling:** Automatically detects tissue regions to avoid processing empty background tiles.
+* **Smart Tiling:** Automatically detects tissue regions to avoid processing empty background tiles. Each tile is scored for focus quality (Laplacian variance and FFT high-frequency energy) so blurry regions can be filtered downstream.
 * **Config-driven Inference:** Ship any model as a weights file + `model_config.yaml`. No code changes needed to add new architectures.
 * **Built-in Models:** Virchow2 multi-head classifier (structure + immune subtypes) and DAFT domain-aware macrophage classifier.
 * **Embedding Extraction:** Extract latent representations from any layer for downstream analysis.
@@ -59,15 +59,28 @@ tbccsi call --sample-id Sample_001 --work-dir ./output \
 
 ### Tiling (`tile`)
 
-Scans a whole slide image, detects tissue regions, and generates a tile coordinate CSV.
+Scans a whole slide image, detects tissue regions, and generates a tile coordinate CSV. Each tissue tile is scored for focus quality using two metrics.
 
 ```bash
 tbccsi tile --sample-id "Sample_001" \
     --input-slide "/path/to/slide.svs" \
     --work-dir "./output" \
     --tile-file "tiles.csv" \
-    --save-tiles  # optional: write tile PNGs to disk
+    --save-tiles       # optional: write tile PNGs to disk
+    --fft-cutoff 0.3   # optional: FFT high-freq cutoff fraction (default: 0.3)
 ```
+
+**Output CSV columns:**
+
+| Column | Description |
+|--------|-------------|
+| `x`, `y` | Tile top-left coordinate at level 0 |
+| `tile_id` | Sequential tile index (0-based) |
+| `mean_red`, `mean_green`, `mean_blue` | Per-channel mean pixel value |
+| `lap_var` | Laplacian variance — higher values indicate sharper focus |
+| `fft_hfe` | FFT high-frequency energy ratio (0–1) — higher values indicate sharper focus |
+
+`--fft-cutoff` controls the radial frequency threshold used to define "high frequency" in the FFT metric. Lower values include more of the spectrum (more sensitive); the default of `0.3` works well for 224×224 tiles at 20× magnification.
 
 ### Prediction (`pred`)
 
@@ -220,6 +233,7 @@ tbccsi/
 ├── model_config.py      # ModelConfig dataclass + YAML loader
 ├── wsi_tiler.py         # WSITiler: slide reading + tissue detection
 ├── wsi_plot.py          # Heatmap generation
+├── utils.py             # Shared utilities: blur metrics (laplacian_variance, fft_high_freq_energy)
 └── models/
     ├── model_virchow2_v2.py    # Virchow2 multi-head (structure + immune)
     ├── model_virchow2_v2.yaml  # its config
