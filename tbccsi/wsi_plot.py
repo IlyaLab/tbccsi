@@ -195,6 +195,175 @@ class WSIPlotter:
 
         return fig, ax, df
 
+    def tile_qc_heatmap(self, tile_file, output_path=None,
+                        tile_size=224, show_grid=False, figsize=(16, 6),
+                        lap_var_clip_pct=(1, 99), fft_hfe_clip_pct=(1, 99)):
+        """
+        Two-panel QC plot from a tile coordinate CSV.
+
+        Panel 1: Mean RGB tile color (same as tile_mean_heatmap).
+        Panel 2: Bivariate blur score map — tissue tiles shown in grey,
+                 modulated by lap_var (blue) and fft_hfe (red). Background is white.
+
+        Args:
+            tile_file: Path, str, or DataFrame of the tile CSV.
+            output_path: Where to save the PNG. If None, figure is returned but not saved.
+            tile_size: Tile size in pixels, or None to auto-detect.
+            show_grid: Draw black tile borders if True.
+            figsize: Overall figure size.
+            lap_var_clip_pct: (lo, hi) percentile clip for lap_var normalization.
+            fft_hfe_clip_pct: (lo, hi) percentile clip for fft_hfe normalization.
+
+        Returns:
+            (fig, [ax1, ax2], df)
+        """
+        # ── Load data ────────────────────────────────────────────────────────
+        if isinstance(tile_file, (str, Path)):
+            df = pd.read_csv(tile_file, comment='#')
+        else:
+            df = tile_file.copy()
+
+        required = {'x', 'y', 'mean_red', 'mean_green', 'mean_blue', 'lap_var', 'fft_hfe'}
+        missing = required - set(df.columns)
+        if missing:
+            raise KeyError(
+                f"tile_file is missing required column(s): {sorted(missing)}. "
+                f"Expected schema: x, y, tile_id, mean_red, mean_green, mean_blue, lap_var, fft_hfe"
+            )
+
+        # ── Auto-detect tile size ─────────────────────────────────────────────
+        if tile_size is None:
+            x_diffs = np.diff(np.sort(df['x'].unique()))
+            y_diffs = np.diff(np.sort(df['y'].unique()))
+            tw = x_diffs[x_diffs > 0].min() if len(x_diffs[x_diffs > 0]) > 0 else 224
+            th = y_diffs[y_diffs > 0].min() if len(y_diffs[y_diffs > 0]) > 0 else 224
+            tile_size = (tw, th)
+        elif isinstance(tile_size, int):
+            tile_size = (tile_size, tile_size)
+
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=figsize)
+        gs = GridSpec(2, 3, figure=fig,
+                      width_ratios=[1, 1, 0.06], wspace=0.08, hspace=0.1)
+        ax1  = fig.add_subplot(gs[:, 0])
+        ax2  = fig.add_subplot(gs[:, 1])
+        cax1 = fig.add_subplot(gs[0, 2])
+        cax2 = fig.add_subplot(gs[1, 2])
+
+        # ── Empty CSV guard ───────────────────────────────────────────────────
+        if df.empty:
+            for ax in (ax1, ax2, cax1, cax2):
+                ax.text(0.5, 0.5, 'No tissue tiles found.' if ax in (ax1, ax2) else '',
+                        ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                ax.axis('off')
+            if output_path:
+                plt.savefig(output_path, bbox_inches='tight')
+                plt.close()
+            return fig, [ax1, ax2, cax1, cax2], df
+
+        min_x, max_x = df['x'].min(), df['x'].max()
+        min_y, max_y = df['y'].min(), df['y'].max()
+        print(f"Image bounds: X({min_x}-{max_x}), Y({min_y}-{max_y})")
+        print(f"Number of tiles: {len(df)}")
+
+        # ── Panel 1: mean RGB ─────────────────────────────────────────────────
+        df['_nr'] = (df['mean_red']   / 255.0).clip(0, 1)
+        df['_ng'] = (df['mean_green'] / 255.0).clip(0, 1)
+        df['_nb'] = (df['mean_blue']  / 255.0).clip(0, 1)
+
+        for _, row in df.iterrows():
+            ax1.add_patch(Rectangle(
+                (row['x'], row['y']), tile_size[0], tile_size[1],
+                facecolor=(row['_nr'], row['_ng'], row['_nb']),
+                edgecolor='black' if show_grid else 'none',
+                linewidth=0.5 if show_grid else 0
+            ))
+
+        ax1.set_xlim(min_x - tile_size[0] * 0.1, max_x + tile_size[0] * 1.1)
+        ax1.set_ylim(min_y - tile_size[1] * 0.1, max_y + tile_size[1] * 1.1)
+        ax1.invert_yaxis()
+        ax1.set_aspect('equal')
+        ax1.axis('off')
+        ax1.set_title(f'Mean tile color  ({len(df)} tiles)')
+
+        # ── Normalize lap_var (log1p + percentile clip) ───────────────────────
+        log_lv = np.log1p(df['lap_var'].values.astype(float))
+        lo, hi = np.percentile(log_lv, list(lap_var_clip_pct))
+        if hi - lo < 1e-6:
+            print("WARNING: lap_var has near-zero variance; showing all tiles at mid-intensity blue.")
+            lv_norm = np.full(len(df), 0.5)
+        else:
+            lv_norm = ((log_lv.clip(lo, hi) - lo) / (hi - lo)).clip(0, 1)
+
+        # ── Normalize fft_hfe (percentile clip) ───────────────────────────────
+        fft_vals = df['fft_hfe'].values.astype(float)
+        lo2, hi2 = np.percentile(fft_vals, list(fft_hfe_clip_pct))
+        if hi2 - lo2 < 1e-6:
+            print("WARNING: fft_hfe has near-zero variance; showing all tiles at mid-intensity red.")
+            fft_norm = np.full(len(df), 0.5)
+        else:
+            fft_norm = ((fft_vals.clip(lo2, hi2) - lo2) / (hi2 - lo2)).clip(0, 1)
+
+        # ── Panel 2: bivariate blur encoding ─────────────────────────────────
+        # Grey base (0.6) + red channel driven by fft_hfe + blue by lap_var
+        for i, (_, row) in enumerate(df.iterrows()):
+            R = 0.6 + 0.4 * fft_norm[i]
+            G = 0.6
+            B = 0.6 + 0.4 * lv_norm[i]
+            ax2.add_patch(Rectangle(
+                (row['x'], row['y']), tile_size[0], tile_size[1],
+                facecolor=(R, G, B),
+                edgecolor='black' if show_grid else 'none',
+                linewidth=0.5 if show_grid else 0
+            ))
+
+        ax2.set_xlim(min_x - tile_size[0] * 0.1, max_x + tile_size[0] * 1.1)
+        ax2.set_ylim(min_y - tile_size[1] * 0.1, max_y + tile_size[1] * 1.1)
+        ax2.invert_yaxis()
+        ax2.set_aspect('equal')
+        ax2.axis('off')
+        ax2.set_title('Blur QC  |  blue = lap_var (log)   red = fft_hfe')
+
+        # ── Colorbars for panel 2 ─────────────────────────────────────────────
+        import matplotlib.colors as mcolors
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import LinearSegmentedColormap
+
+        cmap_blue = LinearSegmentedColormap.from_list('grey_blue', ['#999999', '#0033cc'])
+        cmap_red  = LinearSegmentedColormap.from_list('grey_red',  ['#999999', '#cc0000'])
+
+        cb1 = fig.colorbar(ScalarMappable(norm=mcolors.Normalize(0, 1), cmap=cmap_blue),
+                           cax=cax1)
+        cb1.set_label('lap_var  (log scale)', fontsize=8)
+        cb1.set_ticks([0, 0.5, 1])
+        cb1.set_ticklabels(['low', 'mid', 'high'], fontsize=7)
+
+        cb2 = fig.colorbar(ScalarMappable(norm=mcolors.Normalize(0, 1), cmap=cmap_red),
+                           cax=cax2)
+        cb2.set_label('fft_hfe', fontsize=8)
+        cb2.set_ticks([0, 0.5, 1])
+        cb2.set_ticklabels(['low', 'mid', 'high'], fontsize=7)
+
+        # ── Legend: grey = tissue, white = background ─────────────────────────
+        from matplotlib.patches import Patch
+        legend_handles = [
+            Patch(facecolor='#999999', edgecolor='black', label='Tissue tile'),
+            Patch(facecolor='white',   edgecolor='black', label='Background'),
+        ]
+        ax2.legend(handles=legend_handles, loc='lower left', fontsize=7,
+                   framealpha=0.85, borderpad=0.6)
+
+        # ── Cleanup temp columns ──────────────────────────────────────────────
+        df.drop(columns=['_nr', '_ng', '_nb'], inplace=True)
+
+        plt.tight_layout()
+        if output_path:
+            plt.savefig(output_path, bbox_inches='tight', dpi=150)
+            plt.close()
+            print(f"QC plot saved to {output_path}")
+
+        return fig, [ax1, ax2], df
+
     def plot_prediction_grid(self,
                              prediction_file_path,
                              tile_source_dir,

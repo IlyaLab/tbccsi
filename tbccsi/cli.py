@@ -128,7 +128,8 @@ def tile(
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
         tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
         save_tiles: bool = typer.Option(False, "--save-tiles", help="Save tiles to disk?"),
-        fft_cutoff: float = typer.Option(0.3, "--fft-cutoff", help="FFT high-frequency energy cutoff fraction (0–1). Default: 0.3.")
+        fft_cutoff: float = typer.Option(0.3, "--fft-cutoff", help="FFT high-frequency energy cutoff fraction (0–1). Default: 0.3."),
+        plot: bool = typer.Option(False, "--plot", help="Save a mean-color tile heatmap PNG after tiling.")
 ):
     """
     Generate the tile coordinate file.
@@ -141,6 +142,13 @@ def tile(
 
     tiler = WSITiler(sample_id, input_slide, output_dir, tile_file_path)
     tiler.create_tile_file(save_tiles=save_tiles, fft_cutoff=fft_cutoff)
+
+    if plot:
+        from .wsi_plot import WSIPlotter
+        out_png = output_dir / f"{sample_id}_tile_qc.png"
+        plotter = WSIPlotter()
+        plotter.tile_qc_heatmap(tile_file_path, out_png)
+        typer.echo(f"QC plot saved to {out_png}")
 
     typer.echo("✅ Tiling finished successfully.")
 
