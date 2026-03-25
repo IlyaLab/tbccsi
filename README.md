@@ -40,19 +40,25 @@ This registers the `tbccsi` CLI command and installs all dependencies.
 ## Quick Start
 
 ```bash
-# 1. Tile a slide
+# 1. Tile a slide (produces tiles.csv with coordinates + blur scores)
 tbccsi tile --sample-id Sample_001 --input-slide slide.svs \
     --work-dir ./output --tile-file tiles.csv
 
-# 2. Run inference (auto-detects model from config)
+# 2. Run inference
 tbccsi pred --sample-id Sample_001 --input-slide slide.svs \
-    --work-dir ./output --tile-file tiles.csv \
+    --work-dir ./output --tile-file ./output/tiles.csv \
     -m ./my_model/best.pth --do-inference
 
 # 3. Apply cell-calling thresholds
 tbccsi call --sample-id Sample_001 --work-dir ./output \
     --pred-file ./output/Sample_001_virchow2_multihead_v2_preds.csv \
     --thresh-file thresholds.csv --out-file calls.csv
+
+# (Optional) Extract latent embeddings instead of predictions
+tbccsi embed --sample-id Sample_001 --input-slide slide.svs \
+    --work-dir ./output --tile-file ./output/tiles.csv \
+    -m ./my_model/best.pth -n virchow2_multihead_v2 \
+    --latent-type backbone --save-format npz
 ```
 
 ## Usage
@@ -103,7 +109,7 @@ tbccsi pred ... -m weights.pth -n daft_macrophage --domain-id 1 --do-inference
 |------|-------------|
 | `-m, --model-path` | Path to trained model weights (`.pth`, `.safetensors`) |
 | `-c, --model-config` | Path to `model_config.yaml` (optional if config is next to weights or bundled in package) |
-| `-n, --model-name` | Short name of a registered model (e.g. `daft_macrophage`, `virchow2_multihead`) |
+| `-n, --model-name` | Short name of a registered model (e.g. `virchow2_multihead_v2`, `virchow2_multihead_v3`, `daft_macrophage`) |
 | `-b, --batch-size` | GPU batch size (default: 32) |
 | `--do-inference` | Actually run inference (otherwise just tiles/plots) |
 | `--do-tta` | Apply 8× dihedral test-time augmentation |
@@ -112,15 +118,26 @@ tbccsi pred ... -m weights.pth -n daft_macrophage --domain-id 1 --do-inference
 
 ### Embedding Extraction (`embed`)
 
-Extract latent representations from any model layer.
+Extract latent representations from any model layer. `--latent-type` can be specified multiple times to extract several representations in one pass.
 
 ```bash
 tbccsi embed --sample-id S1 --input-slide slide.svs \
     --work-dir ./output --tile-file tiles.csv \
-    -m model.pth -n virchow2_multihead \
+    -m model.pth -n virchow2_multihead_v2 \
     --latent-type backbone --latent-type structure \
     --save-format npz
 ```
+
+| Flag | Description |
+|------|-------------|
+| `-m, --model-path` | Path to trained model weights (`.pth`, `.safetensors`) |
+| `-c, --model-config` | Path to `model_config.yaml` |
+| `-n, --model-name` | Short name of a registered model (e.g. `virchow2_multihead_v2`, `daft_macrophage`) |
+| `-b, --batch-size` | GPU batch size (default: 32) |
+| `--latent-type` | Name of a latent representation to extract; repeat to extract multiple. If omitted, extracts all types defined by the model |
+| `--save-format` | Output format: `npz` (compressed numpy, default) or `csv` (flattened dataframe) |
+| `--do-tta` | Apply test-time augmentation |
+| `--domain-id` | Domain ID for domain-aware models like DAFT |
 
 ### Cell Calling (`call`)
 
@@ -131,6 +148,12 @@ tbccsi call --sample-id S1 --work-dir ./output \
     --pred-file preds.csv --thresh-file thresholds.csv \
     --out-file calls.csv
 ```
+
+| Flag | Description |
+|------|-------------|
+| `--pred-file` | Prediction CSV produced by `tbccsi pred` |
+| `--thresh-file` | CSV defining per-class probability thresholds |
+| `--out-file` | Output filename (written inside `--work-dir`) |
 
 ## Model Configuration
 
@@ -208,8 +231,9 @@ Then register the short name in `cli.py`:
 
 ```python
 MODEL_REGISTRY = {
-    "virchow2_multihead": "tbccsi.models.model_virchow2_v2.Virchow2MultiHeadModel",
-    "daft_macrophage":    "tbccsi.models.daft_macrophage.DAFT_Virchow2_Macrophage",
+    "virchow2_multihead_v2": "tbccsi.models.model_virchow2_v2.Virchow2MultiHeadModel",
+    "virchow2_multihead_v3": "tbccsi.models.model_virchow2_v3.Virchow2MultiHeadModel",
+    "daft_macrophage":       "tbccsi.models.daft_macrophage.DAFT_Virchow2_Macrophage",
 }
 ```
 
