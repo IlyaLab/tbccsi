@@ -127,7 +127,8 @@ def tile(
         input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
         tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
-        save_tiles: bool = typer.Option(False, "--save-tiles", help="Save tiles to disk?")
+        save_tiles: bool = typer.Option(False, "--save-tiles", help="Save tiles to disk?"),
+        fft_cutoff: float = typer.Option(0.3, "--fft-cutoff", help="FFT high-frequency energy cutoff fraction (0–1). Default: 0.3.")
 ):
     """
     Generate the tile coordinate file.
@@ -139,7 +140,7 @@ def tile(
     typer.echo(f"Generating tiling for sample: {sample_id}")
 
     tiler = WSITiler(sample_id, input_slide, output_dir, tile_file_path)
-    tiler.create_tile_file(save_tiles=save_tiles)
+    tiler.create_tile_file(save_tiles=save_tiles, fft_cutoff=fft_cutoff)
 
     typer.echo("✅ Tiling finished successfully.")
 

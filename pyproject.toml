@@ -24,7 +24,8 @@ dependencies = [
     "tqdm",
     "opencv-python-headless",
     "timm",
-    "matplotlib"
+    "matplotlib",
+    "scipy"
     # Add other libs you use, e.g. "h5py", "timm", etc.
 ]
 
