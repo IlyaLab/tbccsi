@@ -103,7 +103,7 @@ class WSITiler:
         self._slide = None
 
         # make sure the output path exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        self.output_path.mkdir(parents=True, exist_ok=True)
 
 
         if str(self.slide_path).lower().endswith('.vsi'):
