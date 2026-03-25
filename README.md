@@ -74,7 +74,14 @@ tbccsi tile --sample-id "Sample_001" \
     --tile-file "tiles.csv" \
     --save-tiles       # optional: write tile PNGs to disk
     --fft-cutoff 0.3   # optional: FFT high-freq cutoff fraction (default: 0.3)
+    --plot             # optional: save a QC heatmap PNG
 ```
+
+Adding `--plot` writes `{sample_id}_tile_qc.png` to `--work-dir`. This is a two-panel figure:
+
+- **Left panel** — mean tile color: each tissue tile rendered as its average RGB color, giving a quick visual of tissue coverage and staining.
+- **Right panel** — blur QC: tissue tiles shown in grey, with `lap_var` encoded as blue intensity and `fft_hfe` encoded as red intensity. Background (non-tissue) is white. Two colorbars label the blue and red axes independently.
+
 
 **Output CSV columns:**
 
