@@ -16,6 +16,12 @@ MODEL_REGISTRY = {
     "virchow2_multihead_v2":  "tbccsi.models.model_virchow2_v2.Virchow2MultiHeadModel",
     "virchow2_multihead_v3": "tbccsi.models.model_virchow2_v3.Virchow2MultiHeadModel",
     "daft_macrophage":     "tbccsi.models.daft_macrophage.DAFT_Virchow2_Macrophage",
+    # Macrophage count regressors (dataset9, full-dataset trained)
+    "mac_linear":          "tbccsi.models.mac_regressors.MacRegressorLinear",
+    "mac_mlp":             "tbccsi.models.mac_regressors.MacRegressorMLP",
+    "mac_film":            "tbccsi.models.mac_regressors.MacRegressorFiLM",
+    "mac_domain_specific": "tbccsi.models.mac_regressors.MacRegressorDomainSpecific",
+    "mac_resnet":          "tbccsi.models.mac_regressors.MacRegressorResNet",
 }
 
 
@@ -57,10 +63,10 @@ app = typer.Typer(
 @app.command()
 def pred(
         sample_id: str = typer.Option(..., "--sample-id", help="Sample ID (string)."),
-        input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
+        input_slide: Optional[Path] = typer.Option(None, "--input-slide", help="Path to the H&E slide. Required for inference and heatmap thumbnail."),
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
-        tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
-        model_path: Path = typer.Option(..., "-m", "--model-path", help="Path to the trained model weights."),
+        tile_file: Optional[Path] = typer.Option(None, "--tile-file", help="Path to the common tiling file. Required for inference."),
+        model_path: Optional[Path] = typer.Option(None, "-m", "--model-path", help="Path to the trained model weights. Required for inference."),
         model_config: Optional[Path] = typer.Option(
             None, "-c", "--model-config",
             help="Path to model_config.yaml. If omitted, looks in the same dir as --model-path."
@@ -74,7 +80,12 @@ def pred(
         batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
         do_inference: bool = typer.Option(False, "--do-inference", help="Run model inference?"),
         do_tta: bool = typer.Option(False, "--do-tta", help="Run test-time augmentation?"),
-        do_plot: str = typer.Option("None", "--do-plot", help="Select column name to plot."),
+        do_plot: str = typer.Option("None", "--do-plot", help="Select column name to plot, or 'bivariate' for M1/M2 two-colour map."),
+        pred_file: Optional[Path] = typer.Option(
+            None, "--pred-file",
+            help="Path to an existing predictions CSV to use for plotting. "
+                 "If omitted, auto-detects {sample_id}_*_preds.csv in --work-dir."
+        ),
         domain_id: Optional[int] = typer.Option(
             None, "--domain-id",
             help="Domain ID for domain-aware models (e.g. DAFT). Overrides config default."
@@ -98,6 +109,14 @@ def pred(
     """
     typer.echo(f"Running inference for sample: {sample_id}")
 
+    if do_inference and (input_slide is None or tile_file is None or model_path is None):
+        typer.echo("Error: --input-slide, --tile-file, and -m are required when --do-inference is set.", err=True)
+        raise typer.Exit(1)
+
+    if do_plot != "None" and input_slide is None and pred_file is None:
+        typer.echo("Error: --input-slide is required for heatmap thumbnail when --pred-file is not set.", err=True)
+        raise typer.Exit(1)
+
     # Build forward kwargs from CLI flags
     forward_kwargs = {}
     if domain_id is not None:
@@ -116,6 +135,7 @@ def pred(
         do_inference=do_inference,
         do_tta=do_tta,
         do_plot=do_plot,
+        pred_file=pred_file,
         forward_kwargs=forward_kwargs,
     )
     typer.echo("✅ Pipeline finished successfully.")

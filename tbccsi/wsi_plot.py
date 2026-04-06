@@ -46,12 +46,13 @@ class WSIPlotter:
         print("  scaling factor: " + str(max_dim_ratio))
 
         # Create a figure with three subplots
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6), dpi=150)
-
-        # 1. Original thumbnail
-        axes[0].imshow(thumbnail)
-        axes[0].set_title(f'H&E {self.sample}')
-        axes[0].axis('off')
+        # Panel 1: H&E thumbnail (only if slide available)
+        ax_idx = 0
+        if has_slide and thumbnail is not None:
+            axes[0].imshow(thumbnail)
+            axes[0].set_title(f'H&E {self.sample}')
+            axes[0].axis('off')
+            ax_idx = 1
 
         if not predictions_df.empty:
             # Calculate scaling factors to map tile coordinates to thumbnail coordinates
@@ -455,6 +456,120 @@ class WSIPlotter:
             paste_x = col * tile_size
             paste_y = row * tile_size + y_offset
             canvas.paste(tile_img, (paste_x, paste_y))
+
+    def bivariate_heatmap(self, predictions_df, file_name,
+                          col_red="pred_n_m1_log1p", col_blue="pred_n_m2_log1p",
+                          label_red="M1", label_blue="M2",
+                          point_size=None, clip_pct=(2, 98)):
+        """
+        Two-panel heatmap: H&E thumbnail + bivariate M1/M2 spatial map.
+
+        Encodes two continuous columns onto a single panel:
+          red  channel intensity → col_red  (e.g. M1 count, log1p)
+          blue channel intensity → col_blue (e.g. M2 count, log1p)
+          grey base where tissue is present but both are low
+
+        Args:
+            predictions_df: DataFrame with x, y, and prediction columns.
+            file_name:  Output filename (saved inside self.output_path).
+            col_red:    Column to encode as red intensity.
+            col_blue:   Column to encode as blue intensity.
+            label_red:  Legend label for red channel.
+            label_blue: Legend label for blue channel.
+            point_size: Scatter marker size.
+            clip_pct:   (lo, hi) percentile for normalising each channel independently.
+        """
+        from matplotlib.patches import Patch
+
+        print("Generating bivariate heatmap...")
+        output_path = self.output_path / file_name
+
+        # Get thumbnail if slide is available
+        has_slide = self.tiler is not None
+        if has_slide:
+            slide_dims = self.tiler.get_shape(0)
+            max_dim_ratio = max(slide_dims) / 2000.0
+            thumb_size = (int(slide_dims[0] / max_dim_ratio), int(slide_dims[1] / max_dim_ratio))
+            thumbnail = self.tiler.get_thumbnail(thumb_size)
+        else:
+            # Derive display bounds from prediction coordinates
+            x_range = predictions_df['x'].max() - predictions_df['x'].min()
+            y_range = predictions_df['y'].max() - predictions_df['y'].min()
+            max_dim_ratio = max(x_range, y_range) / 2000.0 if max(x_range, y_range) > 0 else 1.0
+            thumb_size = (int(x_range / max_dim_ratio) + 50, int(y_range / max_dim_ratio) + 50)
+            thumbnail = None
+
+        n_panels = 2 if has_slide else 1
+        fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 6), dpi=150)
+        if n_panels == 1:
+            axes = [axes]
+
+        # Auto-size points to approximately fill one tile in display space.
+        # tile_display = tile size in data/display units after thumbnail scaling
+        # points_per_unit = (panel_width_inches * 72pt/in) / data_range
+        # s = (tile_display * points_per_unit) ** 2  (matplotlib s is area in pt²)
+        if point_size is None:
+            tile_display = 224 / max_dim_ratio
+            points_per_unit = (7.0 * 72) / thumb_size[0]
+            point_size = (tile_display * points_per_unit) ** 2
+
+        # Panel 0 (optional): H&E thumbnail
+        ax_idx = 0
+        if has_slide and thumbnail is not None:
+            axes[0].imshow(thumbnail)
+            axes[0].set_title(f'H&E  {self.sample}')
+            axes[0].axis('off')
+            ax_idx = 1
+
+        if not predictions_df.empty:
+            x_scaled = predictions_df['x'] / max_dim_ratio
+            y_scaled = predictions_df['y'] / max_dim_ratio
+
+            # Normalise each channel to [0, 1] using percentile clipping
+            def _norm(vals):
+                lo, hi = np.percentile(vals, list(clip_pct))
+                if hi - lo < 1e-9:
+                    return np.full(len(vals), 0.5)
+                return ((vals.clip(lo, hi) - lo) / (hi - lo)).clip(0, 1)
+
+            r = _norm(predictions_df[col_red].values.astype(float))
+            b = _norm(predictions_df[col_blue].values.astype(float))
+            g = np.full(len(r), 0.55)  # neutral green — keeps colour legible
+
+            # Build per-tile RGBA colours
+            colours = np.stack([
+                0.55 + 0.45 * r,   # red channel
+                g * (1 - 0.4 * np.maximum(r, b)),  # desaturate green where signal is high
+                0.55 + 0.45 * b,   # blue channel
+                np.ones(len(r)),    # alpha
+            ], axis=1)
+
+            axes[ax_idx].scatter(x_scaled, y_scaled, c=colours, marker='s',
+                                 s=point_size, alpha=0.85, linewidths=0)
+
+            axes[ax_idx].set_aspect('equal', adjustable='box')
+            axes[ax_idx].set_xlim(0, thumb_size[0])
+            axes[ax_idx].set_ylim(thumb_size[1], 0)
+            axes[ax_idx].axis('off')
+            axes[ax_idx].set_title(f'Bivariate macrophage map  —  {self.sample}')
+
+            legend_handles = [
+                Patch(facecolor='#dd3333', label=f'{label_red} (high)'),
+                Patch(facecolor='#3333dd', label=f'{label_blue} (high)'),
+                Patch(facecolor='#dd33dd', label=f'{label_red} + {label_blue} (both high)'),
+                Patch(facecolor='#8c8c8c', label='Low / absent'),
+            ]
+            axes[ax_idx].legend(handles=legend_handles, loc='lower right',
+                                fontsize=8, framealpha=0.85)
+        else:
+            axes[ax_idx].text(0.5, 0.5, 'No predictions to display.',
+                              ha='center', va='center', transform=axes[ax_idx].transAxes)
+            axes[ax_idx].axis('off')
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Bivariate heatmap saved to {output_path}")
 
     def _create_placeholder_tile(self, size, text):
         """Creates a black tile with text for missing images."""

@@ -25,6 +25,7 @@ def run_pred(sample_id,
              do_inference=False,
              do_tta=False,
              do_plot="None",
+             pred_file=None,
              forward_kwargs=None):
     """
     Config-driven prediction pipeline.
@@ -43,6 +44,29 @@ def run_pred(sample_id,
 
     output_dir = Path(work_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Heatmap-only mode: skip tiler/inference setup entirely
+    if (not do_inference) and (do_plot != "None"):
+        print("Building Heatmap...")
+        if pred_file is not None:
+            preds_df = pd.read_csv(pred_file)
+        else:
+            pred_files = list(output_dir.glob(f"{sample_id}_*_preds.csv"))
+            if pred_files:
+                preds_df = pd.read_csv(sorted(pred_files)[-1])
+            else:
+                preds_df = pd.read_csv(output_dir / f"{sample_id}_virchow_preds.csv")
+        try:
+            plotter = WSIPlotter(sample_id, input_slide, output_dir)
+            if do_plot == "bivariate":
+                plotter.bivariate_heatmap(preds_df, f"{sample_id}_bivariate_heatmap.png")
+            else:
+                plotter.create_heatmap(preds_df, f"{sample_id}_{do_plot}_heatmap.png",
+                                       point_size=4, prob_col=do_plot)
+        except Exception as e:
+            print("heatmap failed..." + str(e))
+        return
+
     tile_file_path = output_dir / tile_file
 
     # 1. Initialize Tiler
@@ -119,21 +143,6 @@ def run_pred(sample_id,
             preds_df.to_csv(out_path, index=False)
             print(f"\nSaved {len(preds_df)} predictions to {out_path}")
 
-    # Heatmap
-    if (not do_inference) and (do_plot != "None"):
-        print("Building Heatmap...")
-        # Try to find the most recent preds file
-        pred_files = list(output_dir.glob(f"{sample_id}_*_preds.csv"))
-        if pred_files:
-            preds_df = pd.read_csv(pred_files[-1])
-        else:
-            preds_df = pd.read_csv(output_dir / f"{sample_id}_virchow_preds.csv")
-        try:
-            heatmap_file = f"{sample_id}_{do_plot}_heatmap.png"
-            plotter = WSIPlotter(sample_id, input_slide, output_dir)
-            plotter.create_heatmap(preds_df, heatmap_file, point_size=4, prob_col=do_plot)
-        except Exception as e:
-            print("heatmap failed..." + str(e))
 
 
 # ══════════════════════════════════════════════════════════════
