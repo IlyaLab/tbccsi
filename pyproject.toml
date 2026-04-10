@@ -37,5 +37,8 @@ where = ["."]
 include = ["tbccsi*"]  # We only need to find the main package now
 namespaces = false
 
+[tool.setuptools.package-data]
+tbccsi = ["models/*.yaml"]
+
 [project.scripts]
 tbccsi = "tbccsi.cli:app"

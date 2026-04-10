@@ -16,12 +16,12 @@ MODEL_REGISTRY = {
     "virchow2_multihead_v2":  "tbccsi.models.model_virchow2_v2.Virchow2MultiHeadModel",
     "virchow2_multihead_v3": "tbccsi.models.model_virchow2_v3.Virchow2MultiHeadModel",
     "daft_macrophage":     "tbccsi.models.daft_macrophage.DAFT_Virchow2_Macrophage",
-    # Macrophage count regressors (dataset9, full-dataset trained)
-    "mac_linear":          "tbccsi.models.mac_regressors.MacRegressorLinear",
-    "mac_mlp":             "tbccsi.models.mac_regressors.MacRegressorMLP",
-    "mac_film":            "tbccsi.models.mac_regressors.MacRegressorFiLM",
-    "mac_domain_specific": "tbccsi.models.mac_regressors.MacRegressorDomainSpecific",
-    "mac_resnet":          "tbccsi.models.mac_regressors.MacRegressorResNet",
+    # Macrophage count regressors (cell-pair models, Virchow2/ResNet backbones)
+    "mac_linear":          "tbccsi.models.mac_linear.MacRegressorLinear",
+    "mac_mlp":             "tbccsi.models.mac_mlp.MacRegressorMLP",
+    "mac_film":            "tbccsi.models.mac_film.MacRegressorFiLM",
+    "mac_domain_specific": "tbccsi.models.mac_domain_specific.MacRegressorDomainSpecific",
+    "mac_resnet":          "tbccsi.models.mac_resnet.MacRegressorResNet",
 }
 
 
