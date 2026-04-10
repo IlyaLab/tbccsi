@@ -1,0 +1,75 @@
+# model_config.yaml — Virchow2 Multi-Head (structure + immune)
+# Place alongside your .pth or .safetensors weights file.
+
+name: "virchow2_multihead_v3"
+version: "3.0"
+description: >
+  Multi-headed classifier on Virchow2 backbone.
+  Structure head: tumor vs stroma (2 sigmoid outputs).
+  Immune head: 7 immune subtypes (sigmoid outputs).
+
+# ── Backbone ──────────────────────────────────────────────────
+backbone:
+  model_name: "hf-hub:paige-ai/Virchow2"
+  pretrained: true
+  freeze: true
+  create_kwargs:
+    mlp_layer: "SwiGLUPacked"
+    act_layer: "SiLU"
+
+# ── Model class ───────────────────────────────────────────────
+model_class: "tbccsi.models.model_virchow2_v3.Virchow2MultiHeadModel"
+init_kwargs:
+  freeze_backbone: true
+
+# ── Forward signature ─────────────────────────────────────────
+# model(x) — no extra args needed
+forward_extra_kwargs: {}
+
+# ── Output format ─────────────────────────────────────────────
+# model returns (out_structure, out_immune) — a tuple
+output_format: "tuple"
+
+# ── Heads ─────────────────────────────────────────────────────
+heads:
+  - name: "structure"
+    num_outputs: 2
+    activation: "sigmoid"
+    outputs:
+      - name: "tumor"
+        index: 0
+        output_col: "prob_tumor"
+      - name: "stroma"
+        index: 1
+        output_col: "prob_stroma"
+
+  - name: "immune"
+    num_outputs: 7
+    activation: "sigmoid"
+    outputs:
+      - name: "immune"
+        index: 0
+        output_col: "prob_immune"
+      - name: "t_cell"
+        index: 1
+        output_col: "prob_t_cell"
+      - name: "macrophage"
+        index: 2
+        output_col: "prob_macrophage"
+      - name: "cd4"
+        index: 3
+        output_col: "prob_cd4"
+      - name: "cd8"
+        index: 4
+        output_col: "prob_cd8"
+      - name: "m1"
+        index: 5
+        output_col: "prob_m1"
+      - name: "m2"
+        index: 6
+        output_col: "prob_m2"
+
+# ── Preprocessing ─────────────────────────────────────────────
+tile_size: 224
+normalize: "reinhard"
+strip_prefix: "model."

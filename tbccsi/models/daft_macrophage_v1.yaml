@@ -1,0 +1,74 @@
+# model_config.yaml — DAFT M1/M2 Macrophage Classifier
+# Place alongside your best_daft_phase_*.pth checkpoint.
+#
+# Usage:
+#   tbccsi pred --sample-id S1 --input-slide slide.svs --work-dir ./out \
+#     --tile-file tiles.csv -m ./daft_checkpoints/best_daft_phase_full_ft.pth \
+#     -c ./daft_checkpoints/model_config.yaml --domain-id 1 --do-inference
+#
+# The --domain-id flag tells the model which domain-specific batch norm
+# to use at inference time:
+#   0 = Post-CODEX (slides: g1d3, g4d2, g4d3)
+#   1 = Standard H&E (slide: g6d2v1)
+# If omitted, defaults to 1 (standard) as configured below.
+
+name: "daft_macrophage_v1"
+version: "1.0"
+description: >
+  DAFT (Domain-Aware Fine-Tuning) for M1/M2 macrophage classification.
+  4-class softmax: Neither (0), M1-only (1), M2-only (2), Both (3).
+  Uses domain-specific batch normalization in the classifier head.
+
+# ── Backbone ──────────────────────────────────────────────────
+backbone:
+  model_name: "hf-hub:paige-ai/Virchow2"
+  pretrained: true
+  freeze: false          # DAFT fine-tunes backbone layers
+  create_kwargs:
+    mlp_layer: "SwiGLUPacked"
+    act_layer: "SiLU"
+
+# ── Model class ───────────────────────────────────────────────
+# This imports DAFT_Virchow2_Macrophage from your models directory.
+# You'll need to place the model definition at this importable path.
+model_class: "tbccsi.models.daft_macrophage.DAFT_Virchow2_Macrophage"
+init_kwargs:
+  num_classes: 4
+  num_domains: 2
+
+# ── Forward signature ─────────────────────────────────────────
+# model.forward(x, domain_id) — domain_id is required.
+# Default to standard H&E domain (1) at inference if not overridden.
+forward_extra_kwargs:
+  domain_id: 1
+
+# ── Output format ─────────────────────────────────────────────
+# model returns a single [B, 4] logits tensor
+output_format: "single"
+
+# ── Heads ─────────────────────────────────────────────────────
+heads:
+  - name: "macrophage"
+    num_outputs: 4
+    activation: "softmax"
+    outputs:
+      - name: "neither"
+        index: 0
+        output_col: "prob_neither"
+      - name: "m1_only"
+        index: 1
+        output_col: "prob_m1_only"
+      - name: "m2_only"
+        index: 2
+        output_col: "prob_m2_only"
+      - name: "both_m1m2"
+        index: 3
+        output_col: "prob_both_m1m2"
+
+# ── Preprocessing ─────────────────────────────────────────────
+tile_size: 224
+normalize: "reinhard"
+
+# DAFT checkpoints wrap state_dict in {'model_state_dict': ..., 'epoch': ..., ...}
+# The engine auto-detects this format, so no strip_prefix needed.
+strip_prefix: ""

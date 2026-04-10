@@ -5,6 +5,7 @@ import pandas as pd
 from PIL import Image
 from tqdm import tqdm
 import openslide
+from .utils import to_gray, laplacian_variance, fft_high_freq_energy
 from openslide import OpenSlide
 from openslide.lowlevel import OpenSlideUnsupportedFormatError
 import tifffile
@@ -102,7 +103,7 @@ class WSITiler:
         self._slide = None
 
         # make sure the output path exists
-        os.makedirs(os.path.dirname(output_path), exist_ok=True)
+        self.output_path.mkdir(parents=True, exist_ok=True)
 
 
         if str(self.slide_path).lower().endswith('.vsi'):
@@ -432,7 +433,7 @@ class WSITiler:
         print(f"\n✅ Extracted {len(self.tiles)} valid tiles.")
         return self.tiles
 
-    def create_tile_file(self, save_tiles=False):
+    def create_tile_file(self, save_tiles=False, fft_cutoff: float = 0.3):
         """
         Generates a tile coordinate file if it doesn't exist.
 
@@ -493,8 +494,13 @@ class WSITiler:
                         mean_green = np.mean(tile_array[:, :, 1])
                         mean_blue = np.mean(tile_array[:, :, 2])
 
+                        # Get blur scores
+                        gray = to_gray(tile_array)
+                        lap_var = laplacian_variance(gray)
+                        fft_hfe = fft_high_freq_energy(gray, cutoff_fraction=fft_cutoff)
+
                         # Store the LEVEL 0 coordinates
-                        coords_data.append((x_lvl0, y_lvl0, tile_id, mean_red, mean_green, mean_blue))
+                        coords_data.append((x_lvl0, y_lvl0, tile_id, mean_red, mean_green, mean_blue, lap_var, fft_hfe))
                         tile_id += 1  # Only increment for valid tissue tiles
 
                 except Exception as e:
@@ -507,7 +513,7 @@ class WSITiler:
             print("WARNING: No valid tissue tiles were found.")
 
         # Write out the new tile file with level 0 coordinates
-        column_names = ['x', 'y', 'tile_id', 'mean_red', 'mean_green', 'mean_blue']
+        column_names = ['x', 'y', 'tile_id', 'mean_red', 'mean_green', 'mean_blue', 'lap_var', 'fft_hfe']
         df = pd.DataFrame(coords_data, columns=column_names)
 
         # Ensure the directory exists

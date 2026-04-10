@@ -46,12 +46,13 @@ class WSIPlotter:
         print("  scaling factor: " + str(max_dim_ratio))
 
         # Create a figure with three subplots
-        fig, axes = plt.subplots(1, 2, figsize=(12, 6), dpi=150)
-
-        # 1. Original thumbnail
-        axes[0].imshow(thumbnail)
-        axes[0].set_title(f'H&E {self.sample}')
-        axes[0].axis('off')
+        # Panel 1: H&E thumbnail (only if slide available)
+        ax_idx = 0
+        if has_slide and thumbnail is not None:
+            axes[0].imshow(thumbnail)
+            axes[0].set_title(f'H&E {self.sample}')
+            axes[0].axis('off')
+            ax_idx = 1
 
         if not predictions_df.empty:
             # Calculate scaling factors to map tile coordinates to thumbnail coordinates
@@ -195,6 +196,175 @@ class WSIPlotter:
 
         return fig, ax, df
 
+    def tile_qc_heatmap(self, tile_file, output_path=None,
+                        tile_size=224, show_grid=False, figsize=(16, 6),
+                        lap_var_clip_pct=(1, 99), fft_hfe_clip_pct=(1, 99)):
+        """
+        Two-panel QC plot from a tile coordinate CSV.
+
+        Panel 1: Mean RGB tile color (same as tile_mean_heatmap).
+        Panel 2: Bivariate blur score map — tissue tiles shown in grey,
+                 modulated by lap_var (blue) and fft_hfe (red). Background is white.
+
+        Args:
+            tile_file: Path, str, or DataFrame of the tile CSV.
+            output_path: Where to save the PNG. If None, figure is returned but not saved.
+            tile_size: Tile size in pixels, or None to auto-detect.
+            show_grid: Draw black tile borders if True.
+            figsize: Overall figure size.
+            lap_var_clip_pct: (lo, hi) percentile clip for lap_var normalization.
+            fft_hfe_clip_pct: (lo, hi) percentile clip for fft_hfe normalization.
+
+        Returns:
+            (fig, [ax1, ax2], df)
+        """
+        # ── Load data ────────────────────────────────────────────────────────
+        if isinstance(tile_file, (str, Path)):
+            df = pd.read_csv(tile_file, comment='#')
+        else:
+            df = tile_file.copy()
+
+        required = {'x', 'y', 'mean_red', 'mean_green', 'mean_blue', 'lap_var', 'fft_hfe'}
+        missing = required - set(df.columns)
+        if missing:
+            raise KeyError(
+                f"tile_file is missing required column(s): {sorted(missing)}. "
+                f"Expected schema: x, y, tile_id, mean_red, mean_green, mean_blue, lap_var, fft_hfe"
+            )
+
+        # ── Auto-detect tile size ─────────────────────────────────────────────
+        if tile_size is None:
+            x_diffs = np.diff(np.sort(df['x'].unique()))
+            y_diffs = np.diff(np.sort(df['y'].unique()))
+            tw = x_diffs[x_diffs > 0].min() if len(x_diffs[x_diffs > 0]) > 0 else 224
+            th = y_diffs[y_diffs > 0].min() if len(y_diffs[y_diffs > 0]) > 0 else 224
+            tile_size = (tw, th)
+        elif isinstance(tile_size, int):
+            tile_size = (tile_size, tile_size)
+
+        from matplotlib.gridspec import GridSpec
+        fig = plt.figure(figsize=figsize)
+        gs = GridSpec(2, 3, figure=fig,
+                      width_ratios=[1, 1, 0.06], wspace=0.08, hspace=0.1)
+        ax1  = fig.add_subplot(gs[:, 0])
+        ax2  = fig.add_subplot(gs[:, 1])
+        cax1 = fig.add_subplot(gs[0, 2])
+        cax2 = fig.add_subplot(gs[1, 2])
+
+        # ── Empty CSV guard ───────────────────────────────────────────────────
+        if df.empty:
+            for ax in (ax1, ax2, cax1, cax2):
+                ax.text(0.5, 0.5, 'No tissue tiles found.' if ax in (ax1, ax2) else '',
+                        ha='center', va='center', transform=ax.transAxes, fontsize=12)
+                ax.axis('off')
+            if output_path:
+                plt.savefig(output_path, bbox_inches='tight')
+                plt.close()
+            return fig, [ax1, ax2, cax1, cax2], df
+
+        min_x, max_x = df['x'].min(), df['x'].max()
+        min_y, max_y = df['y'].min(), df['y'].max()
+        print(f"Image bounds: X({min_x}-{max_x}), Y({min_y}-{max_y})")
+        print(f"Number of tiles: {len(df)}")
+
+        # ── Panel 1: mean RGB ─────────────────────────────────────────────────
+        df['_nr'] = (df['mean_red']   / 255.0).clip(0, 1)
+        df['_ng'] = (df['mean_green'] / 255.0).clip(0, 1)
+        df['_nb'] = (df['mean_blue']  / 255.0).clip(0, 1)
+
+        for _, row in df.iterrows():
+            ax1.add_patch(Rectangle(
+                (row['x'], row['y']), tile_size[0], tile_size[1],
+                facecolor=(row['_nr'], row['_ng'], row['_nb']),
+                edgecolor='black' if show_grid else 'none',
+                linewidth=0.5 if show_grid else 0
+            ))
+
+        ax1.set_xlim(min_x - tile_size[0] * 0.1, max_x + tile_size[0] * 1.1)
+        ax1.set_ylim(min_y - tile_size[1] * 0.1, max_y + tile_size[1] * 1.1)
+        ax1.invert_yaxis()
+        ax1.set_aspect('equal')
+        ax1.axis('off')
+        ax1.set_title(f'Mean tile color  ({len(df)} tiles)')
+
+        # ── Normalize lap_var (log1p + percentile clip) ───────────────────────
+        log_lv = np.log1p(df['lap_var'].values.astype(float))
+        lo, hi = np.percentile(log_lv, list(lap_var_clip_pct))
+        if hi - lo < 1e-6:
+            print("WARNING: lap_var has near-zero variance; showing all tiles at mid-intensity blue.")
+            lv_norm = np.full(len(df), 0.5)
+        else:
+            lv_norm = ((log_lv.clip(lo, hi) - lo) / (hi - lo)).clip(0, 1)
+
+        # ── Normalize fft_hfe (percentile clip) ───────────────────────────────
+        fft_vals = df['fft_hfe'].values.astype(float)
+        lo2, hi2 = np.percentile(fft_vals, list(fft_hfe_clip_pct))
+        if hi2 - lo2 < 1e-6:
+            print("WARNING: fft_hfe has near-zero variance; showing all tiles at mid-intensity red.")
+            fft_norm = np.full(len(df), 0.5)
+        else:
+            fft_norm = ((fft_vals.clip(lo2, hi2) - lo2) / (hi2 - lo2)).clip(0, 1)
+
+        # ── Panel 2: bivariate blur encoding ─────────────────────────────────
+        # Grey base (0.6) + red channel driven by fft_hfe + blue by lap_var
+        for i, (_, row) in enumerate(df.iterrows()):
+            R = 0.6 + 0.4 * fft_norm[i]
+            G = 0.6
+            B = 0.6 + 0.4 * lv_norm[i]
+            ax2.add_patch(Rectangle(
+                (row['x'], row['y']), tile_size[0], tile_size[1],
+                facecolor=(R, G, B),
+                edgecolor='black' if show_grid else 'none',
+                linewidth=0.5 if show_grid else 0
+            ))
+
+        ax2.set_xlim(min_x - tile_size[0] * 0.1, max_x + tile_size[0] * 1.1)
+        ax2.set_ylim(min_y - tile_size[1] * 0.1, max_y + tile_size[1] * 1.1)
+        ax2.invert_yaxis()
+        ax2.set_aspect('equal')
+        ax2.axis('off')
+        ax2.set_title('Blur QC  |  blue = lap_var (log)   red = fft_hfe')
+
+        # ── Colorbars for panel 2 ─────────────────────────────────────────────
+        import matplotlib.colors as mcolors
+        from matplotlib.cm import ScalarMappable
+        from matplotlib.colors import LinearSegmentedColormap
+
+        cmap_blue = LinearSegmentedColormap.from_list('grey_blue', ['#999999', '#0033cc'])
+        cmap_red  = LinearSegmentedColormap.from_list('grey_red',  ['#999999', '#cc0000'])
+
+        cb1 = fig.colorbar(ScalarMappable(norm=mcolors.Normalize(0, 1), cmap=cmap_blue),
+                           cax=cax1)
+        cb1.set_label('lap_var  (log scale)', fontsize=8)
+        cb1.set_ticks([0, 0.5, 1])
+        cb1.set_ticklabels(['low', 'mid', 'high'], fontsize=7)
+
+        cb2 = fig.colorbar(ScalarMappable(norm=mcolors.Normalize(0, 1), cmap=cmap_red),
+                           cax=cax2)
+        cb2.set_label('fft_hfe', fontsize=8)
+        cb2.set_ticks([0, 0.5, 1])
+        cb2.set_ticklabels(['low', 'mid', 'high'], fontsize=7)
+
+        # ── Legend: grey = tissue, white = background ─────────────────────────
+        from matplotlib.patches import Patch
+        legend_handles = [
+            Patch(facecolor='#999999', edgecolor='black', label='Tissue tile'),
+            Patch(facecolor='white',   edgecolor='black', label='Background'),
+        ]
+        ax2.legend(handles=legend_handles, loc='lower left', fontsize=7,
+                   framealpha=0.85, borderpad=0.6)
+
+        # ── Cleanup temp columns ──────────────────────────────────────────────
+        df.drop(columns=['_nr', '_ng', '_nb'], inplace=True)
+
+        plt.tight_layout()
+        if output_path:
+            plt.savefig(output_path, bbox_inches='tight', dpi=150)
+            plt.close()
+            print(f"QC plot saved to {output_path}")
+
+        return fig, [ax1, ax2], df
+
     def plot_prediction_grid(self,
                              prediction_file_path,
                              tile_source_dir,
@@ -286,6 +456,120 @@ class WSIPlotter:
             paste_x = col * tile_size
             paste_y = row * tile_size + y_offset
             canvas.paste(tile_img, (paste_x, paste_y))
+
+    def bivariate_heatmap(self, predictions_df, file_name,
+                          col_red="pred_n_m1_log1p", col_blue="pred_n_m2_log1p",
+                          label_red="M1", label_blue="M2",
+                          point_size=None, clip_pct=(2, 98)):
+        """
+        Two-panel heatmap: H&E thumbnail + bivariate M1/M2 spatial map.
+
+        Encodes two continuous columns onto a single panel:
+          red  channel intensity → col_red  (e.g. M1 count, log1p)
+          blue channel intensity → col_blue (e.g. M2 count, log1p)
+          grey base where tissue is present but both are low
+
+        Args:
+            predictions_df: DataFrame with x, y, and prediction columns.
+            file_name:  Output filename (saved inside self.output_path).
+            col_red:    Column to encode as red intensity.
+            col_blue:   Column to encode as blue intensity.
+            label_red:  Legend label for red channel.
+            label_blue: Legend label for blue channel.
+            point_size: Scatter marker size.
+            clip_pct:   (lo, hi) percentile for normalising each channel independently.
+        """
+        from matplotlib.patches import Patch
+
+        print("Generating bivariate heatmap...")
+        output_path = self.output_path / file_name
+
+        # Get thumbnail if slide is available
+        has_slide = self.tiler is not None
+        if has_slide:
+            slide_dims = self.tiler.get_shape(0)
+            max_dim_ratio = max(slide_dims) / 2000.0
+            thumb_size = (int(slide_dims[0] / max_dim_ratio), int(slide_dims[1] / max_dim_ratio))
+            thumbnail = self.tiler.get_thumbnail(thumb_size)
+        else:
+            # Derive display bounds from prediction coordinates
+            x_range = predictions_df['x'].max() - predictions_df['x'].min()
+            y_range = predictions_df['y'].max() - predictions_df['y'].min()
+            max_dim_ratio = max(x_range, y_range) / 2000.0 if max(x_range, y_range) > 0 else 1.0
+            thumb_size = (int(x_range / max_dim_ratio) + 50, int(y_range / max_dim_ratio) + 50)
+            thumbnail = None
+
+        n_panels = 2 if has_slide else 1
+        fig, axes = plt.subplots(1, n_panels, figsize=(7 * n_panels, 6), dpi=150)
+        if n_panels == 1:
+            axes = [axes]
+
+        # Auto-size points to approximately fill one tile in display space.
+        # tile_display = tile size in data/display units after thumbnail scaling
+        # points_per_unit = (panel_width_inches * 72pt/in) / data_range
+        # s = (tile_display * points_per_unit) ** 2  (matplotlib s is area in pt²)
+        if point_size is None:
+            tile_display = 224 / max_dim_ratio
+            points_per_unit = (7.0 * 72) / thumb_size[0]
+            point_size = (tile_display * points_per_unit) ** 2
+
+        # Panel 0 (optional): H&E thumbnail
+        ax_idx = 0
+        if has_slide and thumbnail is not None:
+            axes[0].imshow(thumbnail)
+            axes[0].set_title(f'H&E  {self.sample}')
+            axes[0].axis('off')
+            ax_idx = 1
+
+        if not predictions_df.empty:
+            x_scaled = predictions_df['x'] / max_dim_ratio
+            y_scaled = predictions_df['y'] / max_dim_ratio
+
+            # Normalise each channel to [0, 1] using percentile clipping
+            def _norm(vals):
+                lo, hi = np.percentile(vals, list(clip_pct))
+                if hi - lo < 1e-9:
+                    return np.full(len(vals), 0.5)
+                return ((vals.clip(lo, hi) - lo) / (hi - lo)).clip(0, 1)
+
+            r = _norm(predictions_df[col_red].values.astype(float))
+            b = _norm(predictions_df[col_blue].values.astype(float))
+            g = np.full(len(r), 0.55)  # neutral green — keeps colour legible
+
+            # Build per-tile RGBA colours
+            colours = np.stack([
+                0.55 + 0.45 * r,   # red channel
+                g * (1 - 0.4 * np.maximum(r, b)),  # desaturate green where signal is high
+                0.55 + 0.45 * b,   # blue channel
+                np.ones(len(r)),    # alpha
+            ], axis=1)
+
+            axes[ax_idx].scatter(x_scaled, y_scaled, c=colours, marker='s',
+                                 s=point_size, alpha=0.85, linewidths=0)
+
+            axes[ax_idx].set_aspect('equal', adjustable='box')
+            axes[ax_idx].set_xlim(0, thumb_size[0])
+            axes[ax_idx].set_ylim(thumb_size[1], 0)
+            axes[ax_idx].axis('off')
+            axes[ax_idx].set_title(f'Bivariate macrophage map  —  {self.sample}')
+
+            legend_handles = [
+                Patch(facecolor='#dd3333', label=f'{label_red} (high)'),
+                Patch(facecolor='#3333dd', label=f'{label_blue} (high)'),
+                Patch(facecolor='#dd33dd', label=f'{label_red} + {label_blue} (both high)'),
+                Patch(facecolor='#8c8c8c', label='Low / absent'),
+            ]
+            axes[ax_idx].legend(handles=legend_handles, loc='lower right',
+                                fontsize=8, framealpha=0.85)
+        else:
+            axes[ax_idx].text(0.5, 0.5, 'No predictions to display.',
+                              ha='center', va='center', transform=axes[ax_idx].transAxes)
+            axes[ax_idx].axis('off')
+
+        plt.tight_layout()
+        plt.savefig(output_path, dpi=300, bbox_inches='tight')
+        plt.close()
+        print(f"Bivariate heatmap saved to {output_path}")
 
     def _create_placeholder_tile(self, size, text):
         """Creates a black tile with text for missing images."""

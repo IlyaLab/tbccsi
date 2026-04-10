@@ -9,14 +9,12 @@ description = "TBCCSI project with multihead models"
 readme = "README.md"
 requires-python = ">=3.10"
 
-# FIX 1: License is now a simple string (SPDX identifier) to fix the deprecation warning
-license = "MIT"
+license = {text = "MIT"}
 
 authors = [
   { name = "IlyaLab", email = "your.email@example.com" },
 ]
 
-# Add your project dependencies here
 dependencies = [
     "torch",
     "numpy",
@@ -26,7 +24,8 @@ dependencies = [
     "tqdm",
     "opencv-python-headless",
     "timm",
-    "matplotlib"
+    "matplotlib",
+    "scipy"
     # Add other libs you use, e.g. "h5py", "timm", etc.
 ]
 
@@ -37,6 +36,9 @@ Repository = "https://github.com/IlyaLab/tbccsi"
 where = ["."]
 include = ["tbccsi*"]  # We only need to find the main package now
 namespaces = false
+
+[tool.setuptools.package-data]
+tbccsi = ["models/*.yaml"]
 
 [project.scripts]
 tbccsi = "tbccsi.cli:app"
