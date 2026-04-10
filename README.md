@@ -100,13 +100,7 @@ Adding `--plot` writes `{sample_id}_tile_qc.png` to `--work-dir`. This is a two-
 Runs model inference on tiles. The model is specified by weights (`-m`) and optionally a config (`-c` or `-n`).
 
 ```bash
-# Using a config file next to the weights (auto-detected)
-tbccsi pred --sample-id S1 --input-slide slide.svs \
-    --work-dir ./output --tile-file tiles.csv \
-    -m ./my_model/best.pth --do-inference
-
-# Explicit config path
-tbccsi pred ... -m weights.pth -c /path/to/model_config.yaml --do-inference
+tbccsi tile --input-slide "/path/to/slide.vsi" --work-dir "./output" --sample-id "Sample_001"
 
 # By registered model name (config bundled in tbccsi/models/)
 tbccsi pred ... -m weights.pth -n daft_macrophage --domain-id 1 --do-inference
@@ -128,25 +122,7 @@ tbccsi pred ... -m weights.pth -n daft_macrophage --domain-id 1 --do-inference
 Extract latent representations from any model layer. `--latent-type` can be specified multiple times to extract several representations in one pass.
 
 ```bash
-tbccsi embed --sample-id S1 --input-slide slide.svs \
-    --work-dir ./output --tile-file tiles.csv \
-    -m model.pth -n virchow2_multihead_v2 \
-    --latent-type backbone --latent-type structure \
-    --save-format npz
-```
-
-| Flag | Description |
-|------|-------------|
-| `-m, --model-path` | Path to trained model weights (`.pth`, `.safetensors`) |
-| `-c, --model-config` | Path to `model_config.yaml` |
-| `-n, --model-name` | Short name of a registered model (e.g. `virchow2_multihead_v2`, `daft_macrophage`) |
-| `-b, --batch-size` | GPU batch size (default: 32) |
-| `--latent-type` | Name of a latent representation to extract; repeat to extract multiple. If omitted, extracts all types defined by the model |
-| `--save-format` | Output format: `npz` (compressed numpy, default) or `csv` (flattened dataframe) |
-| `--do-tta` | Apply test-time augmentation |
-| `--domain-id` | Domain ID for domain-aware models like DAFT |
-
-### Cell Calling (`call`)
+tbccsi tile --input-slide "/path/to/slide.svs" --work-dir "./output" --sample-id "Sample_001" --save-tiles
 
 Apply threshold-based cell calling to a prediction CSV.
 
@@ -205,7 +181,12 @@ tile_size: 224
 normalize: "reinhard"
 ```
 
-### Config Resolution Order
+* `--sample-id`: Unique identifier for the sample (used in filenames).
+* `--input-slide`: Path to the input WSI file (`.svs`, `.vsi`, `.tiff`).
+* `--work-dir`: Directory where results (CSV and/or tiles) will be saved.
+* `--tile-size`: (Optional) Size of tiles in pixels (default: 224).
+* `--save-tiles / --no-save-tiles`: Whether to save actual images to disk (default: `False`).
+* `--help`: Show the help!
 
 When you run `tbccsi pred -m weights.pth`, the engine finds the config in this order:
 
@@ -280,4 +261,4 @@ tbccsi/
 
 **`No model_config.yaml found`** — Either place a config next to your weights file, pass `-c /path/to/config.yaml`, or use `-n model_name` if the model is registered.
 
-**Legacy models** — If you have existing weights trained with the original Virchow2 multi-head architecture, they still work without any config file. The engine falls back to the hardcoded behavior automatically.
+```
