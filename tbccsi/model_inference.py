@@ -57,20 +57,17 @@ class VirchowInferenceEngine:
     Supports .pth, .safetensors, and Test Time Augmentation (TTA).
     """
 
-    def __init__(self, model_path=None, device='cuda' if torch.cuda.is_available() else 'cpu'):
+    def __init__(self, model_path=None, backbone_only=False,
+                 device='cuda' if torch.cuda.is_available() else 'cpu'):
         self.device = device
 
-        # If no model path is provided, stop here (lightweight init)
-        if model_path is None:
+        # If no model path and not backbone-only, stop here (lightweight init)
+        if model_path is None and not backbone_only:
             print("Initialized VirchowInferenceEngine without loading a model.")
             self.model = None
+            self.backbone = None
             self.processor = None
             return
-
-        # --- Heavy Initialization (only runs if model_path is provided) ---
-        if isinstance(model_path, list):
-            model_path = model_path[0]
-        self.model_path = Path(model_path)
 
         print("Initializing Virchow2 Backbone...")
         self.backbone = timm.create_model(
@@ -82,6 +79,18 @@ class VirchowInferenceEngine:
 
         config = resolve_data_config(self.backbone.pretrained_cfg, model=self.backbone)
         self.processor = create_transform(**config)
+
+        # Backbone-only mode: no head model needed
+        if backbone_only:
+            self.backbone.to(self.device)
+            self.backbone.eval()
+            self.model = None
+            print("Backbone-only mode: Virchow2 loaded, no head model.")
+            return
+
+        if isinstance(model_path, list):
+            model_path = model_path[0]
+        self.model_path = Path(model_path)
 
         print(f"Loading weights from {self.model_path}...")
         self.model = Virchow2MultiHeadModel(hf_model=self.backbone, freeze_backbone=True)
@@ -231,6 +240,7 @@ class VirchowInferenceEngine:
             metadata_list: List of dictionaries containing metadata (tile coords, etc).
             use_tta (bool): If True, applies Test Time Augmentation and averages embeddings.
             latent_types (list): Which latent representations to extract. Options:
+                - 'backbone_cls': 1280D CLS token only (for mac regressor models)
                 - 'backbone': Raw 2560D combined embedding (class token + pooled patches)
                 - 'structure': 512D structure head latent
                 - 'immune_shared': 128D shared immune latent
@@ -258,25 +268,29 @@ class VirchowInferenceEngine:
                     input_batch = self.processor(img).unsqueeze(0).to(self.device)
 
                 with torch.no_grad():
-                    # Extract latents using the model's get_latents method
-                    latents_dict = self.model.get_latents(input_batch)
+                    # --- backbone_cls: CLS token only, no head model required ---
+                    if 'backbone_cls' in latent_types:
+                        out = self.backbone(input_batch)  # [B, tokens, 1280]
+                        cls = out[:, 0]                   # [B, 1280]
+                        if use_tta:
+                            cls_avg = torch.mean(cls, dim=0).cpu().numpy()
+                        else:
+                            cls_avg = cls.squeeze(0).cpu().numpy()
+                        meta['embedding_backbone_cls'] = cls_avg
 
-                    # --- AGGREGATION ---
-                    # If TTA, average across the batch dimension (8 variants)
-                    # Otherwise, just squeeze the batch dimension
-                    for latent_name in latent_types:
-                        if latent_name in latents_dict:
-                            latent_tensor = latents_dict[latent_name]
+                    # --- head-based latents (requires full model) ---
+                    head_types = [lt for lt in latent_types if lt != 'backbone_cls']
+                    if head_types:
+                        latents_dict = self.model.get_latents(input_batch)
 
-                            if use_tta:
-                                # Average across TTA variants
-                                latent_avg = torch.mean(latent_tensor, dim=0).cpu().numpy()
-                            else:
-                                # Single image - squeeze batch dim
-                                latent_avg = latent_tensor.squeeze(0).cpu().numpy()
-
-                            # Store as flat array
-                            meta[f'embedding_{latent_name}'] = latent_avg
+                        for latent_name in head_types:
+                            if latent_name in latents_dict:
+                                latent_tensor = latents_dict[latent_name]
+                                if use_tta:
+                                    latent_avg = torch.mean(latent_tensor, dim=0).cpu().numpy()
+                                else:
+                                    latent_avg = latent_tensor.squeeze(0).cpu().numpy()
+                                meta[f'embedding_{latent_name}'] = latent_avg
 
                 if use_tta:
                     meta['tta_enabled'] = True

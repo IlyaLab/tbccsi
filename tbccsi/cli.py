@@ -106,14 +106,15 @@ def embed(
         input_slide: Path = typer.Option(..., "--input-slide", help="Path to the H&E slide."),
         work_dir: Path = typer.Option(..., "--work-dir", help="Directory to hold saved tiles and the output."),
         tile_file: Path = typer.Option(..., "--tile-file", help="Path to the common tiling file."),
-        model_path: Path = typer.Option(..., "-m", "--model-path", help="Path to the trained model."),
+        model_path: Path = typer.Option(None, "-m", "--model-path", help="Path to the trained model. Not required when using --latent-type backbone_cls."),
         batch_size: int = typer.Option(32, "-b", "--batch-size", help="Batch size for model inference."),
         do_tta: bool = typer.Option(False, "--do-tta", help="Run test-time augmentation?"),
         latent_types: List[str] = typer.Option(
             None,
             "--latent-type",
-            help="Latent types to extract. Options: backbone, structure, immune_shared, immune_tcell, immune_mac. "
-                 "Can be specified multiple times. If not specified, extracts all types."
+            help="Latent types to extract. Options: backbone_cls (1280D CLS token, no -m needed), "
+                 "backbone (2560D CLS+pooled), structure, immune_shared, immune_tcell, immune_mac. "
+                 "Can be specified multiple times. If not specified, extracts all head-based types."
         ),
         save_format: str = typer.Option(
             "npz",
@@ -125,7 +126,11 @@ def embed(
     Extract latent embeddings from WSI tiles.
 
     Examples:
-        # Extract all latent types as NPZ
+        # Extract backbone CLS token only (no -m needed — uses pretrained Virchow2 directly)
+        tbccsi embed --sample-id TCGA-01 --input-slide slide.svs --work-dir ./output --tile-file tiles.csv \\
+            --latent-type backbone_cls --save-format npz
+
+        # Extract all head-based latent types as NPZ (requires -m)
         tbccsi embed --sample-id TCGA-01 --input-slide slide.svs --work-dir ./output --tile-file tiles.csv -m model.pth
 
         # Extract only structure and T-cell embeddings

@@ -54,7 +54,12 @@ tbccsi call --sample-id Sample_001 --work-dir ./output \
     --pred-file ./output/Sample_001_virchow2_multihead_v2_preds.csv \
     --thresh-file thresholds.csv --out-file calls.csv
 
-# (Optional) Extract latent embeddings instead of predictions
+# (Optional) Extract backbone CLS embeddings for fast multi-model inference (no -m needed)
+tbccsi embed --sample-id Sample_001 --input-slide slide.svs \
+    --work-dir ./output --tile-file ./output/tiles.csv \
+    --latent-type backbone_cls --save-format npz
+
+# (Optional) Extract head-based latent embeddings
 tbccsi embed --sample-id Sample_001 --input-slide slide.svs \
     --work-dir ./output --tile-file ./output/tiles.csv \
     -m ./my_model/best.pth -n virchow2_multihead_v2 \
@@ -128,7 +133,15 @@ tbccsi pred ... -m weights.pth -n daft_macrophage --domain-id 1 --do-inference
 
 Extract latent representations from any model layer. `--latent-type` can be specified multiple times to extract several representations in one pass.
 
+**Backbone CLS embeddings** (for mac regressor models) do not require `-m` — the pretrained Virchow2 backbone is used directly. This is the recommended way to pre-compute embeddings once before running multiple mac regressor models, avoiding repeated backbone inference per model.
+
 ```bash
+# Backbone CLS only — no -m required
+tbccsi embed --sample-id S1 --input-slide slide.svs \
+    --work-dir ./output --tile-file tiles.csv \
+    --latent-type backbone_cls --save-format npz
+
+# Head-based latents — -m required
 tbccsi embed --sample-id S1 --input-slide slide.svs \
     --work-dir ./output --tile-file tiles.csv \
     -m model.pth -n virchow2_multihead_v2 \
@@ -138,14 +151,22 @@ tbccsi embed --sample-id S1 --input-slide slide.svs \
 
 | Flag | Description |
 |------|-------------|
-| `-m, --model-path` | Path to trained model weights (`.pth`, `.safetensors`) |
-| `-c, --model-config` | Path to `model_config.yaml` |
-| `-n, --model-name` | Short name of a registered model (e.g. `virchow2_multihead_v2`, `virchow2_multihead_v3`, `daft_macrophage`, `mac_linear`, `mac_mlp`, `mac_film`, `mac_domain_specific`, `mac_resnet`) |
+| `-m, --model-path` | Path to trained model weights (`.pth`, `.safetensors`). Not required when using `--latent-type backbone_cls`. |
 | `-b, --batch-size` | GPU batch size (default: 32) |
-| `--latent-type` | Name of a latent representation to extract; repeat to extract multiple. If omitted, extracts all types defined by the model |
+| `--latent-type` | Name of a latent representation to extract; repeat to extract multiple. See table below. If omitted, extracts all head-based types. |
 | `--save-format` | Output format: `npz` (compressed numpy, default) or `csv` (flattened dataframe) |
 | `--do-tta` | Apply test-time augmentation |
-| `--domain-id` | Domain ID for domain-aware models like DAFT |
+
+**Available latent types:**
+
+| Type | Dimensions | Model required | Description |
+|------|-----------|----------------|-------------|
+| `backbone_cls` | 1280 | No | Virchow2 CLS token. Input format expected by all mac regressor models (`mac_mlp`, `mac_linear`, `mac_film`, `mac_domain_specific`). |
+| `backbone` | 2560 | Yes | CLS token + attention-pooled patches concatenated. Used by the Virchow2 multi-head classifier. |
+| `structure` | 512 | Yes | Structure head latent (Virchow2 multi-head only) |
+| `immune_shared` | 128 | Yes | Shared immune latent (Virchow2 multi-head only) |
+| `immune_tcell` | 64 | Yes | T-cell specific latent (Virchow2 multi-head only) |
+| `immune_mac` | 64 | Yes | Macrophage specific latent (Virchow2 multi-head only) |
 
 ### Cell Calling (`call`)
 

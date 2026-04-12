@@ -179,11 +179,18 @@ def run_virchow_embed(sample_id,
         latent_types = ['backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac']
 
     # Validate latent types
-    valid_types = {'backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac'}
+    valid_types = {'backbone_cls', 'backbone', 'structure', 'immune_shared', 'immune_tcell', 'immune_mac'}
     latent_types = [lt for lt in latent_types if lt in valid_types]
 
     if not latent_types:
         print("Error: No valid latent types specified.")
+        return
+
+    # backbone_cls only needs the backbone — no local model weights required
+    needs_head = any(lt != 'backbone_cls' for lt in latent_types)
+    backbone_only = not needs_head
+    if needs_head and model_path is None:
+        print("Error: --model-path is required when extracting head-based latents.")
         return
 
     RAM_BATCH_SIZE = 256
@@ -218,7 +225,7 @@ def run_virchow_embed(sample_id,
 
     # 4. Initialize Components
     normalizer = ReinhardNormalizer()
-    engine = VirchowInferenceEngine(model_path)
+    engine = VirchowInferenceEngine(model_path, backbone_only=backbone_only)
 
     all_embeddings = []
 
