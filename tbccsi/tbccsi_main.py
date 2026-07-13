@@ -73,6 +73,13 @@ def run_virchow_pred(sample_id,
         print(f"Processing {len(coords_df)} tiles in {len(df_chunks)} RAM batches...")
 
         for i, chunk in enumerate(tqdm(df_chunks, desc="Processing Batches")):
+            
+            if isinstance(chunk, np.ndarray):
+                if chunk.ndim == 2 and chunk.shape[1] == len(coords_df.columns):
+                    chunk = pd.DataFrame(chunk, columns=coords_df.columns)
+                else:
+                    chunk = pd.DataFrame(chunk)
+            
             if chunk.empty: continue
 
             batch_images = []
@@ -232,10 +239,17 @@ def run_virchow_embed(sample_id,
     # Process in chunks to manage RAM
     num_chunks = max(1, len(coords_df) // RAM_BATCH_SIZE)
     df_chunks = np.array_split(coords_df, num_chunks)
-
+    
     print(f"Processing {len(coords_df)} tiles in {len(df_chunks)} RAM batches...")
 
     for i, chunk in enumerate(tqdm(df_chunks, desc="Extracting Embeddings")):
+
+        if isinstance(chunk, np.ndarray):
+            if chunk.ndim == 2 and chunk.shape[1] == len(coords_df.columns):
+                chunk = pd.DataFrame(chunk, columns=coords_df.columns)
+            else:
+                chunk = pd.DataFrame(chunk)
+
         if chunk.empty:
             continue
 
